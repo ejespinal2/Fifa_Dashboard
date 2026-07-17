@@ -23,6 +23,17 @@ from fifa_analytics.db.models import connect, upsert_player
 
 API_BASE = "https://api.sofifa.net"
 
+# The bare python-requests User-Agent gets blocked by a lot of APIs (even
+# ones meant to be publicly callable) — send headers that look like sofifa's
+# own website calling its own API, since Referer/Origin checks are common
+# for "public" APIs that are really just the site's own frontend backend.
+REQUEST_HEADERS = {
+    "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/125.0.0.0 Safari/537.36",
+    "Accept": "application/json",
+    "Referer": "https://sofifa.com/",
+    "Origin": "https://sofifa.com",
+}
+
 # From the "Positions" table in sofifa's API docs (the position1 field on each player)
 POSITION_CODE_MAP = {
     0: "GK", 1: "SW", 2: "RWB", 3: "RB", 4: "RCB", 5: "CB", 6: "LCB", 7: "LB",
@@ -37,7 +48,7 @@ def fetch_team(team_id: int, roster: str | None = None) -> dict:
     e.g. "260013") — omit it to get the latest available data for that team.
     """
     url = f"{API_BASE}/team/{team_id}/{roster}" if roster else f"{API_BASE}/team/{team_id}"
-    resp = requests.get(url, timeout=30)
+    resp = requests.get(url, headers=REQUEST_HEADERS, timeout=30)
     resp.raise_for_status()
     return resp.json()["data"]
 
