@@ -1,0 +1,123 @@
+-- FIFA Career Mode Analytics — Phase 1 schema
+-- Normalized "long format" for match stats: EA's on-screen fields vary by tab
+-- and by position (GK-only fields), and this repo only captures Player Summary
+-- + Team Summary + Team Events for now. A fixed wide table would need a
+-- migration every time a captured field set changes; stat_name/stat_value
+-- does not.
+
+CREATE TABLE players (
+    player_id       INTEGER PRIMARY KEY,
+    name            TEXT NOT NULL,
+    position        TEXT NOT NULL,          -- GK/CB/FB/DM/CM/AM/W/ST
+    jersey_number   INTEGER,
+    base_overall    INTEGER NOT NULL,
+    base_pace       INTEGER,
+    base_shooting   INTEGER,
+    base_passing    INTEGER,
+    base_dribbling  INTEGER,
+    base_defending  INTEGER,
+    base_physical   INTEGER,
+    age             INTEGER,
+    potential       INTEGER,
+    source          TEXT,                   -- e.g. 'sofifa:2026'
+    UNIQUE(name, source)
+);
+
+CREATE TABLE teams (
+    team_id   INTEGER PRIMARY KEY,
+    name      TEXT NOT NULL UNIQUE,
+    league    TEXT
+);
+
+CREATE TABLE seasons (
+    season_id   INTEGER PRIMARY KEY,
+    year_label  TEXT NOT NULL UNIQUE
+);
+
+CREATE TABLE matches (
+    match_id       INTEGER PRIMARY KEY,
+    season_id      INTEGER NOT NULL REFERENCES seasons(season_id),
+    matchweek      INTEGER NOT NULL,
+    home_team_id   INTEGER NOT NULL REFERENCES teams(team_id),
+    away_team_id   INTEGER NOT NULL REFERENCES teams(team_id),
+    home_score     INTEGER,
+    away_score     INTEGER,
+    date           TEXT,
+    screenshot_dir TEXT NOT NULL             -- data/screenshots/... path, for traceability back to source images
+);
+
+-- One row per screenshot actually captured (a "capture"). Numeric stats and
+-- validation state hang off this, not off the match/player pair directly,
+-- since the same match+player can in principle be recaptured (e.g. a bad OCR
+-- read redone from a fresh screenshot).
+CREATE TABLE ocr_captures (
+    capture_id          INTEGER PRIMARY KEY,
+    match_id            INTEGER NOT NULL REFERENCES matches(match_id),
+    capture_type        TEXT NOT NULL CHECK (capture_type IN ('player_summary', 'team_summary', 'team_events')),
+    player_id           INTEGER REFERENCES players(player_id),   -- set for player_summary, NULL otherwise
+    team_id             INTEGER REFERENCES teams(team_id),       -- set for team_summary/team_events, NULL otherwise
+    screenshot_path     TEXT NOT NULL,
+    ocr_confidence_avg  REAL,
+    raw_text            TEXT,               -- unparsed OCR dump; only used for team_events (see ocr/regions.py)
+    reviewed            INTEGER NOT NULL DEFAULT 0,
+    reviewed_at         TEXT
+);
+
+-- Every stat visible on a Player Summary or Team Summary screen, one row per
+-- field. E.g. (capture_id=1, stat_name='goals', stat_value=1).
+CREATE TABLE match_stat_values (
+    capture_id     INTEGER NOT NULL REFERENCES ocr_captures(capture_id),
+    stat_name      TEXT NOT NULL,
+    stat_value     REAL,
+    ocr_confidence REAL,
+    PRIMARY KEY (capture_id, stat_name)
+);
+
+-- Parsed from the team_events capture: one row per goal/assist/card event.
+CREATE TABLE match_events (
+    event_id    INTEGER PRIMARY KEY,
+    match_id    INTEGER NOT NULL REFERENCES matches(match_id),
+    capture_id  INTEGER NOT NULL REFERENCES ocr_captures(capture_id),
+    team_id     INTEGER REFERENCES teams(team_id),
+    player_id   INTEGER REFERENCES players(player_id),
+    minute      INTEGER,
+    event_type  TEXT NOT NULL              -- 'goal' | 'assist' | 'yellow_card' | 'red_card'
+);
+
+-- Stubbed for later phases — created now, left empty, so Phase 2+ don't need
+-- a migration to start writing to them.
+CREATE TABLE true_overall_history (
+    player_id        INTEGER NOT NULL REFERENCES players(player_id),
+    match_id         INTEGER NOT NULL REFERENCES matches(match_id),
+    true_overall     REAL,
+    true_pace        REAL,
+    true_shooting    REAL,
+    true_passing     REAL,
+    true_dribbling   REAL,
+    true_defending   REAL,
+    true_physical    REAL,
+    confidence_score REAL,
+    PRIMARY KEY (player_id, match_id)
+);
+
+CREATE TABLE team_match_expected (
+    match_id             INTEGER NOT NULL REFERENCES matches(match_id),
+    team_id              INTEGER NOT NULL REFERENCES teams(team_id),
+    expected_goals_for   REAL,
+    expected_goals_against REAL,
+    expected_points      REAL,
+    actual_points        REAL,
+    PRIMARY KEY (match_id, team_id)
+);
+
+CREATE TABLE scouting_candidates (
+    candidate_id     INTEGER PRIMARY KEY,
+    player_id        INTEGER,               -- external id from source, not a local players.player_id
+    source           TEXT,
+    position         TEXT,
+    age              INTEGER,
+    current_overall  INTEGER,
+    potential        INTEGER,
+    estimated_wage   REAL,
+    fit_score        REAL
+);

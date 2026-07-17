@@ -1,0 +1,137 @@
+"""Crop-region definitions for the 3 screen types captured in Phase 1.
+
+All boxes are fractions of (width, height) — (x1, y1, x2, y2), each in [0, 1] —
+so they hold up across different screenshot resolutions (PS5 native capture
+vs. a cropped/resized copy) as long as the in-game UI layout itself doesn't
+change between patches.
+
+IMPORTANT: these numbers are visual estimates from screenshots viewed in
+chat, not pixel-measured against real files — nobody has run this against an
+actual screenshot yet. Run `python -m fifa_analytics.ocr.calibrate <path>` on
+a couple of real files and adjust the boxes below before trusting any OCR
+output from this module.
+"""
+
+
+def even_rows(box: tuple[float, float, float, float], n: int) -> list[tuple[float, float, float, float]]:
+    """Split a bounding box into n equal-height horizontal row bands."""
+    x1, y1, x2, y2 = box
+    row_h = (y2 - y1) / n
+    return [(x1, y1 + i * row_h, x2, y1 + (i + 1) * row_h) for i in range(n)]
+
+
+# ---------------------------------------------------------------------------
+# Player Performance -> Summary tab
+# ---------------------------------------------------------------------------
+
+# On-screen order of the right-hand stat list, top to bottom. Fixed by the
+# game UI — do not reorder without re-checking a real screenshot.
+PLAYER_SUMMARY_STAT_ORDER = [
+    "goals",
+    "assists",
+    "shots",
+    "shot_accuracy_pct",
+    "passes",
+    "pass_accuracy_pct",
+    "dribbles",
+    "dribble_success_rate_pct",
+    "tackles",
+    "tackle_success_rate_pct",
+    "offsides",
+    "fouls_committed",
+    "possession_won",
+    "possession_lost",
+    "minutes_played_vs_team_avg",
+    "distance_covered_vs_team_avg_km",
+    "distance_sprinted_vs_team_avg_km",
+]
+
+PLAYER_SUMMARY_REGIONS = {
+    # "Total Rating: 7.5" text, upper-center
+    "total_rating": (0.385, 0.195, 0.55, 0.235),
+    # Highlighted row in the left-hand squad list gives active player's name + position
+    "active_player_name": (0.09, 0.185, 0.34, 0.235),
+    # The full 17-row stat list on the right. Column split below handles
+    # "player value" vs. "team value" — both appear on every row here.
+    "stat_list_box": (0.663, 0.275, 0.955, 0.885),
+    "stat_list_row_count": len(PLAYER_SUMMARY_STAT_ORDER),
+    # Within each row band, x-ranges for the two number columns
+    "stat_value_col_player": (0.885, 0.915),
+    "stat_value_col_team": (0.915, 0.955),
+}
+
+
+# ---------------------------------------------------------------------------
+# Team match screen -> Summary tab
+#
+# The stat list is taller than one screen — it takes 2 scrolled screenshots
+# to capture in full (observed: one at rest-scroll showing Tackles..Def Line
+# Breaks Attempted, one scrolled to top showing Possession %..Yellow Cards).
+# Treat these as two capture "pages" of the same capture_type.
+# ---------------------------------------------------------------------------
+
+TEAM_SUMMARY_PAGE_1_STAT_ORDER = [
+    "tackles",
+    "tackles_won",
+    "interceptions",
+    "saves",
+    "fouls_committed",
+    "offsides",
+    "corners",
+    "free_kicks",
+    "penalty_kicks",
+    "yellow_cards",
+    "red_cards",
+    "def_line_breaks_through",
+    "def_line_breaks_around",
+    "def_line_breaks_over",
+    "def_line_breaks_attempted",
+]
+
+TEAM_SUMMARY_PAGE_2_STAT_ORDER = [
+    "possession_pct",
+    "ball_recovery_time_seconds",
+    "shots",
+    "expected_goals",
+    "passes",
+    "tackles",
+    "tackles_won",
+    "interceptions",
+    "saves",
+    "fouls_committed",
+    "offsides",
+    "corners",
+    "free_kicks",
+    "penalty_kicks",
+    "yellow_cards",
+]
+
+TEAM_SUMMARY_REGIONS = {
+    "home_score": (0.40, 0.05, 0.47, 0.11),
+    "away_score": (0.53, 0.05, 0.60, 0.11),
+    "match_clock": (0.46, 0.11, 0.54, 0.15),
+    # Center stat-name column + two side columns (home left, away right)
+    "stat_list_box": (0.34, 0.235, 0.665, 0.895),
+    "stat_value_col_home": (0.335, 0.365),
+    "stat_value_col_away": (0.635, 0.665),
+    # The three ring stats (dribble success / shot accuracy / pass accuracy)
+    # sit outside the main list, one per third of the screen height
+    "ring_stat_home": (0.14, 0.14, 0.22, 0.93),
+    "ring_stat_away": (0.78, 0.14, 0.86, 0.93),
+}
+
+
+# ---------------------------------------------------------------------------
+# Team match screen -> Events tab
+#
+# Only one event was observed in the sample screenshots (a single assist,
+# shown centered with a player face + minute), so it's unconfirmed whether
+# multiple events in the same match render as a vertical list, a horizontal
+# timeline, or one-at-a-time via a scroll/toggle control. Treat this region
+# as "scan the whole band for face+minute markers" rather than fixed rows
+# until a match with 2+ events can be checked.
+# ---------------------------------------------------------------------------
+
+TEAM_EVENTS_REGIONS = {
+    "event_band": (0.05, 0.30, 0.95, 0.60),
+}

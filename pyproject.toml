@@ -1,0 +1,18 @@
+[project]
+name = "fifa-analytics"
+version = "0.1.0"
+description = "Local FIFA/EA FC Career Mode analytics: OCR match stats, true-overall modeling, team analysis."
+requires-python = ">=3.11"
+dependencies = [
+    "opencv-python-headless>=4.9",
+    "easyocr>=1.7",
+    "pytesseract>=0.3.10",
+    "numpy>=1.26",
+    "requests>=2.31",
+    "beautifulsoup4>=4.12",
+    "streamlit>=1.35",
+    "pandas>=2.2",
+]
+
+[tool.setuptools.packages.find]
+where = ["src"]

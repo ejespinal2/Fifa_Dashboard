@@ -1,0 +1,14 @@
+__pycache__/
+*.pyc
+.venv/
+venv/
+
+# Local data — never commit real screenshots or the database
+data/fifa.db
+data/screenshots/**
+data/crops/**
+!data/screenshots/.gitkeep
+!data/crops/.gitkeep
+
+.env
+.DS_Store
