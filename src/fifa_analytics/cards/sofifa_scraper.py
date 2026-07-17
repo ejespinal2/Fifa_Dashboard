@@ -3,6 +3,13 @@
 Scope for Phase 1: your own squad only, from a single team page. League-wide
 scouting scrapes (for scouting_candidates) are a Phase 4 concern.
 
+sofifa sits behind Cloudflare, which blocks plain `requests` calls even with
+a User-Agent header set — this uses `cloudscraper` (a requests-compatible
+drop-in that solves Cloudflare's JS/TLS bot check) instead. If sofifa still
+403s with cloudscraper, that usually means Cloudflare has raised its
+challenge level and a real headless browser (Playwright) would be the next
+thing to try.
+
 sofifa's markup has changed over the years and isn't guaranteed to match the
 selectors below right now — verify against a live fetch of your team's page
 before trusting this, and adjust ROW_SELECTOR / column indices to match what
@@ -12,12 +19,10 @@ you actually see in the page source.
 import re
 import sys
 
-import requests
+import cloudscraper
 from bs4 import BeautifulSoup
 
 from fifa_analytics.db.models import connect, upsert_player
-
-USER_AGENT = "Mozilla/5.0 (compatible; fifa-analytics/0.1; personal use)"
 
 # sofifa's team page renders one <table> of players. Each row historically
 # has the player name in the first link, followed by columns for age,
@@ -34,7 +39,8 @@ def _parse_int(text: str) -> int | None:
 
 
 def fetch_team_page(team_url: str) -> BeautifulSoup:
-    resp = requests.get(team_url, headers={"User-Agent": USER_AGENT}, timeout=30)
+    scraper = cloudscraper.create_scraper(browser={"browser": "chrome", "platform": "windows", "mobile": False})
+    resp = scraper.get(team_url, timeout=30)
     resp.raise_for_status()
     return BeautifulSoup(resp.text, "html.parser")
 
