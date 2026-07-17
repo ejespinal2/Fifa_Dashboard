@@ -4,8 +4,15 @@ fractional coordinates accordingly.
 
 Usage:
     python -m fifa_analytics.ocr.calibrate player_summary path/to/screenshot.png
-    python -m fifa_analytics.ocr.calibrate team_summary path/to/screenshot.png
+    python -m fifa_analytics.ocr.calibrate team_summary path/to/screenshot.png [page]
     python -m fifa_analytics.ocr.calibrate team_events path/to/screenshot.png
+
+team_summary's stat list needs 2 scrolled screenshots to capture in full —
+pass page=1 for the screenshot showing Tackles..Def Line Breaks Attempted
+(the scroll's resting position), or page=2 for the one showing Possession
+%..Yellow Cards (scrolled to the top). Passing the wrong page number won't
+break anything, it'll just draw the wrong row labels over the right row
+boundaries — the boxes will still show whether the row heights line up.
 
 Writes <screenshot>_calibration.png next to the input with boxes overlaid.
 """

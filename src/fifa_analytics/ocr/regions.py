@@ -127,11 +127,14 @@ TEAM_SUMMARY_REGIONS = {
 # Only one event was observed in the sample screenshots (a single assist,
 # shown centered with a player face + minute), so it's unconfirmed whether
 # multiple events in the same match render as a vertical list, a horizontal
-# timeline, or one-at-a-time via a scroll/toggle control. Treat this region
-# as "scan the whole band for face+minute markers" rather than fixed rows
-# until a match with 2+ events can be checked.
+# timeline, or one-at-a-time via a scroll/toggle control. event_band is
+# deliberately generous top-to-bottom (just below the tab bar to just above
+# the bottom control hints) so it catches however many rows a busier match
+# adds, rather than assuming they stack in a specific direction from the
+# single-event sample. Treat this as "scan the whole band for face+minute
+# markers" rather than fixed rows until a match with 2+ events can be checked.
 # ---------------------------------------------------------------------------
 
 TEAM_EVENTS_REGIONS = {
-    "event_band": (0.05, 0.30, 0.95, 0.60),
+    "event_band": (0.05, 0.22, 0.95, 0.90),
 }
