@@ -1,104 +1,72 @@
-"""Scrapes a squad's card overalls from sofifa.
+"""Pulls a squad's card overalls from SoFIFA's public JSON API (api.sofifa.net).
 
-Scope for Phase 1: your own squad only, from a single team page. League-wide
-scouting scrapes (for scouting_candidates) are a Phase 4 concern.
+This replaced an earlier HTML-scraping approach entirely — sofifa.com's own
+web pages sit behind Cloudflare, but api.sofifa.net is a documented, public,
+token-free API for exactly this data (see https://sofifa.com/document). One
+call to /team/{id} returns the full squad, including each player's six core
+sub-attributes (pac/sho/pas/dri/def/phy) directly — no per-player calls, no
+CSS-selector guessing, no attribute-column mapping.
 
-sofifa sits behind Cloudflare's bot check, which blocks both plain `requests`
-and `cloudscraper` (confirmed against a real run — sofifa's challenge level
-is high enough neither gets through). Rather than escalate into a browser-
-automation arms race, this accepts EITHER a live URL (tried via cloudscraper,
-kept in case it works on a lower-protected page or Cloudflare's rules ease
-up) OR a path to an HTML file you saved yourself:
+Per sofifa's stated API terms: non-commercial use only, and don't build an
+app that relies *entirely* on their API without your own database behind it
+(this repo's SQLite schema covers that).
 
-    1. Open the team page in your normal browser (Cloudflare won't block a
-       real human browsing session)
-    2. Right-click -> Save Page As -> "Webpage, HTML only"
-    3. Pass that file's path instead of the URL
-
-sofifa's markup has changed over the years and isn't guaranteed to match the
-selectors below right now — verify against a live fetch of your team's page
-before trusting this, and adjust ROW_SELECTOR / column indices to match what
-you actually see in the page source.
+Find your team's numeric ID from its sofifa team page URL, e.g.
+https://sofifa.com/team/11/manchester-united/ -> team_id=11
 """
 
-import re
 import sys
-from pathlib import Path
 
-import cloudscraper
-from bs4 import BeautifulSoup
+import requests
 
 from fifa_analytics.db.models import connect, upsert_player
 
-# sofifa's team page renders one <table> of players. Each row historically
-# has the player name in the first link, followed by columns for age,
-# overall (OVR), potential (POT), and per-attribute ratings. Confirm this
-# against the live page — column order shifts between sofifa layout updates.
-ROW_SELECTOR = "table tbody tr"
-NAME_SELECTOR = "td.col-name a[href*='/player/']"
-POSITION_SELECTOR = "td.col-name span.pos"
+API_BASE = "https://api.sofifa.net"
+
+# From the "Positions" table in sofifa's API docs (the position1 field on each player)
+POSITION_CODE_MAP = {
+    0: "GK", 1: "SW", 2: "RWB", 3: "RB", 4: "RCB", 5: "CB", 6: "LCB", 7: "LB",
+    8: "LWB", 9: "RDM", 10: "CDM", 11: "LDM", 12: "RM", 13: "RCM", 14: "CM",
+    15: "LCM", 16: "LM", 17: "RAM", 18: "CAM", 19: "LAM", 20: "RF", 21: "CF",
+    22: "LF", 23: "RW", 24: "RS", 25: "ST", 26: "LS", 27: "LW", 28: "SUB", 29: "RES",
+}
 
 
-def _parse_int(text: str) -> int | None:
-    match = re.search(r"-?\d+", text or "")
-    return int(match.group()) if match else None
+def fetch_team(team_id: int, roster: str | None = None) -> dict:
+    """roster pins a specific historical data snapshot (sofifa's roster ID,
+    e.g. "260013") — omit it to get the latest available data for that team.
+    """
+    url = f"{API_BASE}/team/{team_id}/{roster}" if roster else f"{API_BASE}/team/{team_id}"
+    resp = requests.get(url, timeout=30)
+    resp.raise_for_status()
+    return resp.json()["data"]
 
 
-def load_team_page(source: str) -> BeautifulSoup:
-    """source is either an http(s) URL or a path to a saved HTML file."""
-    if source.startswith("http://") or source.startswith("https://"):
-        scraper = cloudscraper.create_scraper(browser={"browser": "chrome", "platform": "windows", "mobile": False})
-        resp = scraper.get(source, timeout=30)
-        resp.raise_for_status()
-        html = resp.text
-    else:
-        html = Path(source).read_text(encoding="utf-8", errors="replace")
-    return BeautifulSoup(html, "html.parser")
+def player_display_name(player: dict) -> str:
+    return player.get("commonName") or f"{player['firstName']} {player['lastName']}"
 
 
-def parse_squad(soup: BeautifulSoup) -> list[dict]:
-    players = []
-    for row in soup.select(ROW_SELECTOR):
-        name_el = row.select_one(NAME_SELECTOR)
-        if not name_el:
-            continue
-
-        cols = row.find_all("td")
-        col_text = [c.get_text(strip=True) for c in cols]
-
-        pos_el = row.select_one(POSITION_SELECTOR)
-
-        players.append(
-            {
-                "name": name_el.get_text(strip=True),
-                "position": pos_el.get_text(strip=True) if pos_el else None,
-                # Column indices below are a best guess (age, OVR, POT) —
-                # print `col_text` for one row and fix these against what
-                # sofifa actually renders before trusting the output.
-                "age": _parse_int(col_text[2]) if len(col_text) > 2 else None,
-                "base_overall": _parse_int(col_text[3]) if len(col_text) > 3 else None,
-                "potential": _parse_int(col_text[4]) if len(col_text) > 4 else None,
-            }
-        )
-    return players
-
-
-def scrape_and_store(source: str, db_path: str, source_label: str) -> int:
-    soup = load_team_page(source)
-    players = parse_squad(soup)
+def scrape_and_store(team_id: int, db_path: str, source_label: str, roster: str | None = None) -> int:
+    team = fetch_team(team_id, roster)
+    players = team.get("players", [])
 
     conn = connect(db_path)
     try:
         for p in players:
-            if p["base_overall"] is None:
-                continue
             upsert_player(
                 conn,
-                name=p["name"],
-                position=p["position"] or "UNK",
-                base_overall=p["base_overall"],
-                age=p["age"],
-                potential=p["potential"],
+                name=player_display_name(p),
+                position=POSITION_CODE_MAP.get(p.get("position1"), "UNK"),
+                base_overall=p["overallRating"],
+                base_pace=p.get("pac"),
+                base_shooting=p.get("sho"),
+                base_passing=p.get("pas"),
+                base_dribbling=p.get("dri"),
+                base_defending=p.get("def"),
+                base_physical=p.get("phy"),
+                age=p.get("age"),
+                potential=p.get("potential"),
+                jersey_number=p.get("jerseyNumber"),
                 source=source_label,
             )
     finally:
@@ -107,8 +75,10 @@ def scrape_and_store(source: str, db_path: str, source_label: str) -> int:
 
 
 if __name__ == "__main__":
-    if len(sys.argv) != 4:
-        print("Usage: python -m fifa_analytics.cards.sofifa_scraper <team_url_or_saved_html_path> <db_path> <source_label>")
+    if len(sys.argv) not in (4, 5):
+        print("Usage: python -m fifa_analytics.cards.sofifa_scraper <team_id> <db_path> <source_label> [roster]")
         sys.exit(1)
-    count = scrape_and_store(sys.argv[1], sys.argv[2], sys.argv[3])
+    team_id = int(sys.argv[1])
+    roster = sys.argv[4] if len(sys.argv) == 5 else None
+    count = scrape_and_store(team_id, sys.argv[2], sys.argv[3], roster)
     print(f"Stored {count} players.")

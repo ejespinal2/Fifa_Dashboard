@@ -28,14 +28,17 @@ python -c "from fifa_analytics.db.models import init_db; init_db('data/fifa.db')
 
 ## Capturing a match
 
-1. sofifa sits behind Cloudflare and blocks automated fetches (confirmed —
-   both plain `requests` and `cloudscraper` get a 403). Rather than fight
-   that: open your team's sofifa page in a normal browser, **Save Page As →
-   Webpage, HTML only**, and point the scraper at that saved file (a live
-   URL still works too, in case Cloudflare's rules ease up later):
+1. sofifa's own web pages sit behind Cloudflare, but sofifa also publishes a
+   free, public, token-free JSON API at `api.sofifa.net` (documented at
+   https://sofifa.com/document) that returns a whole squad — including every
+   player's six core sub-attributes — in one call. Find your team's numeric
+   ID from its sofifa page URL (e.g. `sofifa.com/team/11/manchester-united/`
+   → `11`), then:
    ```bash
-   python -m fifa_analytics.cards.sofifa_scraper path/to/saved_team_page.html data/fifa.db "sofifa:2026"
+   python -m fifa_analytics.cards.sofifa_scraper 11 data/fifa.db "sofifa:fc26"
    ```
+   sofifa's stated API terms ask for non-commercial use and your own database
+   behind it (both true here) — see the `/document` page for the full terms.
 2. Organize each match's screenshots under
    `data/screenshots/season_XX/matchweek_YY/match_ZZZZ/` following the naming
    convention in `ocr/pipeline.py`'s docstring:
@@ -67,8 +70,10 @@ python -c "from fifa_analytics.db.models import init_db; init_db('data/fifa.db')
   currently just OCR-dumps the whole events band as raw text (see
   `ocr/regions.py`) rather than parsing structured (player, minute, event_type)
   rows. Send a screenshot from a match with multiple goals/cards to nail this down.
-- **sofifa's markup may not match `cards/sofifa_scraper.py`'s selectors** — verify
-  against a live page before trusting scraped values.
+- **The sofifa API calls in `cards/sofifa_scraper.py` are unverified against a
+  live response** — this session's network policy blocks `api.sofifa.net`
+  too, so the response shape is taken from sofifa's documentation PDF, not a
+  real test run. Run it and report back if field names don't match.
 - **No xA (expected assists) field exists on any captured screen** — if
   expected-assist over/underperformance matters to the model, it isn't coming from
   OCR and would need another source or to be dropped.
@@ -83,6 +88,7 @@ migration.
 
 ## Tech stack
 
-Python 3.11+, SQLite, OpenCV, EasyOCR, Streamlit, `requests`/`beautifulsoup4` for
-the card scraper. All free/local — see the project spec for the full roadmap
-(true-overall modeling, team analysis, scouting engine, local LLM assistant).
+Python 3.11+, SQLite, OpenCV, EasyOCR, Streamlit, `requests` against sofifa's
+public API for the card scraper. All free/local — see the project spec for
+the full roadmap (true-overall modeling, team analysis, scouting engine,
+local LLM assistant).
