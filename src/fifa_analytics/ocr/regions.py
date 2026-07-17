@@ -47,10 +47,14 @@ PLAYER_SUMMARY_STAT_ORDER = [
 ]
 
 PLAYER_SUMMARY_REGIONS = {
-    # "Total Rating: 7.5" text, upper-center
-    "total_rating": (0.385, 0.195, 0.55, 0.235),
-    # Highlighted row in the left-hand squad list gives active player's name + position
-    "active_player_name": (0.09, 0.185, 0.34, 0.235),
+    # "Total Rating: 7.5" text, upper-center. Extended down slightly from the
+    # first calibration pass, which was cutting it close.
+    "total_rating": (0.385, 0.195, 0.55, 0.26),
+    # Highlighted row in the left-hand squad list gives active player's name
+    # (first + last name, sometimes wrapped across 2 lines) + position.
+    # Extended down further than the first calibration pass so a 3-part name
+    # (or a name that wraps to a 3rd line) doesn't get clipped.
+    "active_player_name": (0.09, 0.185, 0.34, 0.29),
     # The full 17-row stat list on the right. Column split below handles
     # "player value" vs. "team value" — both appear on every row here.
     "stat_list_box": (0.663, 0.275, 0.955, 0.885),
@@ -64,31 +68,13 @@ PLAYER_SUMMARY_REGIONS = {
 # ---------------------------------------------------------------------------
 # Team match screen -> Summary tab
 #
-# The stat list is taller than one screen — it takes 2 scrolled screenshots
-# to capture in full (observed: one at rest-scroll showing Tackles..Def Line
-# Breaks Attempted, one scrolled to top showing Possession %..Yellow Cards).
-# Treat these as two capture "pages" of the same capture_type.
+# The stat list actually scrolls across 2 screen positions (one showing
+# Tackles..Def Line Breaks Attempted, one scrolled up showing Possession
+# %..Yellow Cards) but only the scrolled-up view is captured going forward —
+# it's the one screenshot per team per match this pipeline expects.
 # ---------------------------------------------------------------------------
 
-TEAM_SUMMARY_PAGE_1_STAT_ORDER = [
-    "tackles",
-    "tackles_won",
-    "interceptions",
-    "saves",
-    "fouls_committed",
-    "offsides",
-    "corners",
-    "free_kicks",
-    "penalty_kicks",
-    "yellow_cards",
-    "red_cards",
-    "def_line_breaks_through",
-    "def_line_breaks_around",
-    "def_line_breaks_over",
-    "def_line_breaks_attempted",
-]
-
-TEAM_SUMMARY_PAGE_2_STAT_ORDER = [
+TEAM_SUMMARY_STAT_ORDER = [
     "possession_pct",
     "ball_recovery_time_seconds",
     "shots",
@@ -128,13 +114,14 @@ TEAM_SUMMARY_REGIONS = {
 # shown centered with a player face + minute), so it's unconfirmed whether
 # multiple events in the same match render as a vertical list, a horizontal
 # timeline, or one-at-a-time via a scroll/toggle control. event_band is
-# deliberately generous top-to-bottom (just below the tab bar to just above
-# the bottom control hints) so it catches however many rows a busier match
-# adds, rather than assuming they stack in a specific direction from the
-# single-event sample. Treat this as "scan the whole band for face+minute
-# markers" rather than fixed rows until a match with 2+ events can be checked.
+# deliberately generous top-to-bottom — right up against the tab bar above
+# and the bottom control hints below — so it catches however many rows a
+# busier match adds, rather than assuming they stack in a specific direction
+# from the single-event sample. Treat this as "scan the whole band for
+# face+minute markers" rather than fixed rows until a match with 2+ events
+# can be checked.
 # ---------------------------------------------------------------------------
 
 TEAM_EVENTS_REGIONS = {
-    "event_band": (0.05, 0.22, 0.95, 0.90),
+    "event_band": (0.03, 0.19, 0.97, 0.95),
 }

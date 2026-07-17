@@ -4,15 +4,11 @@ fractional coordinates accordingly.
 
 Usage:
     python -m fifa_analytics.ocr.calibrate player_summary path/to/screenshot.png
-    python -m fifa_analytics.ocr.calibrate team_summary path/to/screenshot.png [page]
+    python -m fifa_analytics.ocr.calibrate team_summary path/to/screenshot.png
     python -m fifa_analytics.ocr.calibrate team_events path/to/screenshot.png
 
-team_summary's stat list needs 2 scrolled screenshots to capture in full —
-pass page=1 for the screenshot showing Tackles..Def Line Breaks Attempted
-(the scroll's resting position), or page=2 for the one showing Possession
-%..Yellow Cards (scrolled to the top). Passing the wrong page number won't
-break anything, it'll just draw the wrong row labels over the right row
-boundaries — the boxes will still show whether the row heights line up.
+team_summary expects the scrolled-up view (showing Possession %..Yellow
+Cards) — that's the one screenshot per team per match this pipeline uses.
 
 Writes <screenshot>_calibration.png next to the input with boxes overlaid.
 """
@@ -43,9 +39,9 @@ def calibrate_player_summary(image):
         _draw_box(image, row_box, name, color=(0, 165, 255))
 
 
-def calibrate_team_summary(image, page: int = 1):
+def calibrate_team_summary(image):
     r = regions.TEAM_SUMMARY_REGIONS
-    order = regions.TEAM_SUMMARY_PAGE_1_STAT_ORDER if page == 1 else regions.TEAM_SUMMARY_PAGE_2_STAT_ORDER
+    order = regions.TEAM_SUMMARY_STAT_ORDER
     _draw_box(image, r["stat_list_box"], "stat_list_box", color=(255, 0, 0))
     _draw_box(image, r["ring_stat_home"], "ring_stat_home")
     _draw_box(image, r["ring_stat_away"], "ring_stat_away")
@@ -59,7 +55,7 @@ def calibrate_team_events(image):
 
 if __name__ == "__main__":
     if len(sys.argv) < 3:
-        print("Usage: python -m fifa_analytics.ocr.calibrate <player_summary|team_summary|team_events> <image_path> [page]")
+        print("Usage: python -m fifa_analytics.ocr.calibrate <player_summary|team_summary|team_events> <image_path>")
         sys.exit(1)
 
     screen_type, image_path = sys.argv[1], sys.argv[2]
@@ -71,8 +67,7 @@ if __name__ == "__main__":
     if screen_type == "player_summary":
         calibrate_player_summary(image)
     elif screen_type == "team_summary":
-        page = int(sys.argv[3]) if len(sys.argv) > 3 else 1
-        calibrate_team_summary(image, page)
+        calibrate_team_summary(image)
     elif screen_type == "team_events":
         calibrate_team_events(image)
     else:

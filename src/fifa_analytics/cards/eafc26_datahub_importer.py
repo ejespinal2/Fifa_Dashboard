@@ -24,7 +24,7 @@ import sys
 
 import requests
 
-from fifa_analytics.db.models import connect, upsert_player
+from fifa_analytics.db.models import connect, get_or_create_team, upsert_player
 
 RAW_CSV_URL = "https://raw.githubusercontent.com/ismailoksuz/EAFC26-DataHub/main/data/players.csv"
 
@@ -62,10 +62,15 @@ def scrape_and_store(club_name: str, db_path: str, source_label: str, csv_source
 
     conn = connect(db_path)
     try:
+        # Use the CSV's own club_name for every row rather than the possibly
+        # differently-cased club_name argument, so the team row this batch
+        # links to matches exactly what players_for_club actually matched on.
+        team_id = get_or_create_team(conn, players[0]["club_name"], players[0].get("league_name"))
         for p in players:
             upsert_player(
                 conn,
                 name=p["short_name"],
+                team_id=team_id,
                 position=p.get("club_position") or "UNK",
                 base_overall=_to_int(p["overall"]),
                 base_pace=_to_int(p.get("pace")),

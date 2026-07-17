@@ -16,7 +16,6 @@ def test_player_summary_stat_order_matches_region_row_count():
     assert regions.PLAYER_SUMMARY_REGIONS["stat_list_row_count"] == len(regions.PLAYER_SUMMARY_STAT_ORDER)
 
 
-def test_team_summary_pages_have_distinct_stat_orders():
-    # both pages legitimately repeat some stat names (the scrollable list
-    # overlaps at the boundary) but shouldn't be identical
-    assert regions.TEAM_SUMMARY_PAGE_1_STAT_ORDER != regions.TEAM_SUMMARY_PAGE_2_STAT_ORDER
+def test_team_summary_stat_order_matches_stat_list_row_count():
+    rows = regions.even_rows(regions.TEAM_SUMMARY_REGIONS["stat_list_box"], len(regions.TEAM_SUMMARY_STAT_ORDER))
+    assert len(rows) == len(regions.TEAM_SUMMARY_STAT_ORDER)

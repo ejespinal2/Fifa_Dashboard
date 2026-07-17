@@ -11,7 +11,7 @@ from datetime import datetime, timezone
 
 import streamlit as st
 
-from fifa_analytics.db.models import connect, mark_reviewed
+from fifa_analytics.db.models import connect, mark_reviewed, players_for_teams
 
 
 def get_db_path() -> str:
@@ -44,6 +44,21 @@ def load_stat_values(conn: sqlite3.Connection, capture_id: int):
     ).fetchall()
 
 
+def load_match_team_ids(conn: sqlite3.Connection, match_id: int) -> tuple[int, int]:
+    row = conn.execute(
+        "SELECT home_team_id, away_team_id FROM matches WHERE match_id = ?", (match_id,)
+    ).fetchone()
+    return row["home_team_id"], row["away_team_id"]
+
+
+def assign_player(conn: sqlite3.Connection, capture_id: int, player_id: int, team_id: int) -> None:
+    conn.execute(
+        "UPDATE ocr_captures SET player_id = ?, team_id = ? WHERE capture_id = ?",
+        (player_id, team_id, capture_id),
+    )
+    conn.commit()
+
+
 def main():
     st.set_page_config(page_title="FIFA Analytics — OCR Validation", layout="wide")
     st.title("OCR Validation Queue")
@@ -71,6 +86,23 @@ def main():
         st.image(capture["screenshot_path"], use_container_width=True)
 
     with col_fields:
+        selected_player_id = None
+
+        if capture["capture_type"] == "player_summary" and capture["player_id"] is None:
+            st.warning(
+                f"Couldn't auto-match a player for this screenshot. OCR read the name as: "
+                f"**{capture['raw_text'] or '(nothing read)'}**"
+            )
+            home_id, away_id = load_match_team_ids(conn, capture["match_id"])
+            candidates = players_for_teams(conn, [home_id, away_id])
+            options = {f"{c['name']} (player_id={c['player_id']})": c for c in candidates}
+            choice = st.selectbox("Assign the correct player", ["-- select --"] + list(options.keys()))
+            if choice != "-- select --":
+                selected_player_id = options[choice]["player_id"]
+                st.caption(f"Will assign to {choice} on confirm.")
+        elif capture["capture_type"] == "player_summary":
+            st.caption(f"OCR read name as: {capture['raw_text']}")
+
         if capture["capture_type"] == "team_events":
             st.text_area("Raw OCR text (not yet parsed into structured events)", capture["raw_text"] or "", height=150)
         else:
@@ -83,7 +115,13 @@ def main():
                     label, value=row["stat_value"] if row["stat_value"] is not None else 0.0, key=f"{capture['capture_id']}_{row['stat_name']}"
                 )
 
-        if st.button("Confirm and mark reviewed", type="primary"):
+        confirm_blocked = capture["capture_type"] == "player_summary" and capture["player_id"] is None and selected_player_id is None
+        if st.button("Confirm and mark reviewed", type="primary", disabled=confirm_blocked):
+            if selected_player_id is not None:
+                home_id, away_id = load_match_team_ids(conn, capture["match_id"])
+                candidates = players_for_teams(conn, [home_id, away_id])
+                team_id = next(c["team_id"] for c in candidates if c["player_id"] == selected_player_id)
+                assign_player(conn, capture["capture_id"], selected_player_id, team_id)
             if capture["capture_type"] != "team_events":
                 for stat_name, value in edited.items():
                     conn.execute(
@@ -93,6 +131,8 @@ def main():
                 conn.commit()
             mark_reviewed(conn, capture["capture_id"], datetime.now(timezone.utc).isoformat())
             st.rerun()
+        if confirm_blocked:
+            st.caption("Assign a player above before this can be confirmed.")
 
 
 if __name__ == "__main__":

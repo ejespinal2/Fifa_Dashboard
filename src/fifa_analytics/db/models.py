@@ -46,6 +46,7 @@ def upsert_player(
     position: str,
     base_overall: int,
     source: str,
+    team_id: int | None = None,
     jersey_number: int | None = None,
     base_pace: int | None = None,
     base_shooting: int | None = None,
@@ -57,7 +58,8 @@ def upsert_player(
     potential: int | None = None,
 ) -> int:
     row = conn.execute(
-        "SELECT player_id FROM players WHERE name = ? AND source = ?", (name, source)
+        "SELECT player_id FROM players WHERE name = ? AND source = ? AND team_id IS ?",
+        (name, source, team_id),
     ).fetchone()
     if row:
         player_id = row["player_id"]
@@ -73,12 +75,12 @@ def upsert_player(
         )
     else:
         cur = conn.execute(
-            """INSERT INTO players (name, position, jersey_number, base_overall, base_pace,
+            """INSERT INTO players (name, team_id, position, jersey_number, base_overall, base_pace,
                base_shooting, base_passing, base_dribbling, base_defending, base_physical,
                age, potential, source)
-               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
             (
-                name, position, jersey_number, base_overall, base_pace, base_shooting,
+                name, team_id, position, jersey_number, base_overall, base_pace, base_shooting,
                 base_passing, base_dribbling, base_defending, base_physical,
                 age, potential, source,
             ),
@@ -86,6 +88,19 @@ def upsert_player(
         player_id = cur.lastrowid
     conn.commit()
     return player_id
+
+
+def players_for_teams(conn: sqlite3.Connection, team_ids: list[int]) -> list[sqlite3.Row]:
+    placeholders = ",".join("?" * len(team_ids))
+    return conn.execute(
+        f"SELECT player_id, name, team_id FROM players WHERE team_id IN ({placeholders})",
+        team_ids,
+    ).fetchall()
+
+
+def get_team_id_by_name(conn: sqlite3.Connection, name: str) -> int | None:
+    row = conn.execute("SELECT team_id FROM teams WHERE name = ?", (name,)).fetchone()
+    return row["team_id"] if row else None
 
 
 def create_match(

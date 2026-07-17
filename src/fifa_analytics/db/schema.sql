@@ -5,9 +5,16 @@
 -- migration every time a captured field set changes; stat_name/stat_value
 -- does not.
 
+CREATE TABLE teams (
+    team_id   INTEGER PRIMARY KEY,
+    name      TEXT NOT NULL UNIQUE,
+    league    TEXT
+);
+
 CREATE TABLE players (
     player_id       INTEGER PRIMARY KEY,
     name            TEXT NOT NULL,
+    team_id         INTEGER REFERENCES teams(team_id),   -- current club, from the card-data import
     position        TEXT NOT NULL,          -- GK/CB/FB/DM/CM/AM/W/ST
     jersey_number   INTEGER,
     base_overall    INTEGER NOT NULL,
@@ -19,14 +26,8 @@ CREATE TABLE players (
     base_physical   INTEGER,
     age             INTEGER,
     potential       INTEGER,
-    source          TEXT,                   -- e.g. 'sofifa:2026'
-    UNIQUE(name, source)
-);
-
-CREATE TABLE teams (
-    team_id   INTEGER PRIMARY KEY,
-    name      TEXT NOT NULL UNIQUE,
-    league    TEXT
+    source          TEXT,                   -- e.g. 'eafc26-datahub:main'
+    UNIQUE(name, team_id, source)
 );
 
 CREATE TABLE seasons (
