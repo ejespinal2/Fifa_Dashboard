@@ -1,4 +1,4 @@
-from fifa_analytics.ocr.player_match import match_player, normalize, surname
+from fifa_analytics.ocr.player_match import clean_ocr_name, match_player, normalize, surname
 
 CANDIDATES = [
     {"player_id": 1, "name": "Bruno Fernandes", "team_id": 11},
@@ -45,3 +45,19 @@ def test_ambiguous_surname_falls_through_to_fuzzy():
     assert result.confidence in ("fuzzy", "none")
     if result.player_id is not None:
         assert result.player_id in (2, 5)
+
+
+def test_clean_ocr_name_strips_rating_bleed():
+    # Real-run case: the rating circle bled into the name crop
+    assert clean_ocr_name("Aurelien Tchouameni 7.5") == "Aurelien Tchouameni"
+
+
+def test_clean_ocr_name_strips_any_digit_token():
+    assert clean_ocr_name("87 Bruno Fernandes") == "Bruno Fernandes"
+    assert clean_ocr_name("B. Mbeumo") == "B. Mbeumo"
+
+
+def test_cleaned_name_then_matches_by_surname():
+    result = match_player(clean_ocr_name("Aurelien Tchouameni 7.5"), CANDIDATES)
+    assert result.player_id == 3
+    assert result.confidence == "surname"

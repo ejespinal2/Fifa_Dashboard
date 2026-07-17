@@ -33,6 +33,19 @@ def normalize(name: str) -> str:
     return " ".join(stripped.lower().split())
 
 
+def clean_ocr_name(ocr_text: str) -> str:
+    """Drops tokens containing digits from an OCR'd name.
+
+    The active_player_name crop can pick up neighboring UI numbers — a real
+    run read "Aurelien Tchouameni 7.5" because the header's rating circle
+    bled into the crop, which poisoned surname matching (the "surname"
+    became "7.5") and produced a junk regen player. No real player-name
+    token contains a digit, so stripping digit-bearing tokens is safe.
+    """
+    tokens = [t for t in ocr_text.split() if not any(ch.isdigit() for ch in t)]
+    return " ".join(tokens)
+
+
 def surname(name: str) -> str:
     tokens = normalize(name).split()
     return tokens[-1] if tokens else ""

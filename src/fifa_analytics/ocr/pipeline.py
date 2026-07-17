@@ -56,7 +56,7 @@ from fifa_analytics.db.models import (
 from fifa_analytics.ocr import regions
 from fifa_analytics.ocr.event_parse import classify_event_icon, parse_event_text
 from fifa_analytics.ocr.extract import read_field, read_text
-from fifa_analytics.ocr.player_match import match_player
+from fifa_analytics.ocr.player_match import clean_ocr_name, match_player
 from fifa_analytics.ocr.preprocess import clean_for_ocr, crop_fractional
 from fifa_analytics.ocr.team_match import match_team_header
 
@@ -129,10 +129,13 @@ def process_player_summary(
 
     name_crop = crop_fractional(image, regions.PLAYER_SUMMARY_REGIONS["active_player_name"])
     ocr_name, _ = read_text(clean_for_ocr(name_crop))
+    # Strip UI numbers the crop may have picked up (e.g. the rating circle's
+    # "7.5") before any matching — see clean_ocr_name's docstring.
+    cleaned_name = clean_ocr_name(ocr_name)
 
     if team_match.team_id is not None:
         team_candidates = [c for c in candidates if c["team_id"] == team_match.team_id]
-        player_id, confidence = resolve_player(conn, ocr_name, team_match.team_id, team_candidates, csv_rows)
+        player_id, confidence = resolve_player(conn, cleaned_name, team_match.team_id, team_candidates, csv_rows)
         team_id = team_match.team_id
     else:
         print(f"Could not tell which team {image_path} belongs to (OCR read {header_text!r}) — needs manual assignment.")
@@ -224,7 +227,7 @@ def process_team_events(conn, match_id: int, image_path: str, candidates: list) 
         print(f"team_events: couldn't parse a player name + minute from OCR text {raw_text!r}")
         return capture_id, event_info
 
-    player_match = match_player(name, candidates)
+    player_match = match_player(clean_ocr_name(name), candidates)
     if player_match.player_id is None:
         print(f"team_events: parsed {name!r} at minute {minute} but couldn't match to either roster.")
         return capture_id, event_info

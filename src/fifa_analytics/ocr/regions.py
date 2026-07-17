@@ -57,8 +57,12 @@ PLAYER_SUMMARY_REGIONS = {
     # Highlighted row in the left-hand squad list gives active player's name
     # (first + last name, sometimes wrapped across 2 lines) + position.
     # Extended down further than the first calibration pass so a 3-part name
-    # (or a name that wraps to a 3rd line) doesn't get clipped.
-    "active_player_name": (0.09, 0.185, 0.34, 0.29),
+    # (or a name that wraps to a 3rd line) doesn't get clipped. Right edge
+    # pulled back from 0.34 after a real run: the header's rating circle
+    # sits around x=0.28-0.33 and was bleeding into the crop, so OCR read
+    # "Aurelien Tchouameni 7.5". (clean_ocr_name also strips digit tokens
+    # as a second line of defense.)
+    "active_player_name": (0.09, 0.185, 0.27, 0.29),
     # The full 17-row stat list on the right. Column split below handles
     # "player value" vs. "team value" — both appear on every row here.
     "stat_list_box": (0.663, 0.275, 0.955, 0.885),
