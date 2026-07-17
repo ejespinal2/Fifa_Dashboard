@@ -166,3 +166,21 @@ def mark_reviewed(conn: sqlite3.Connection, capture_id: int, reviewed_at: str) -
         (reviewed_at, capture_id),
     )
     conn.commit()
+
+
+def create_match_event(
+    conn: sqlite3.Connection,
+    match_id: int,
+    capture_id: int,
+    team_id: int | None,
+    player_id: int | None,
+    minute: int | None,
+    event_type: str,
+) -> int:
+    cur = conn.execute(
+        """INSERT INTO match_events (match_id, capture_id, team_id, player_id, minute, event_type)
+           VALUES (?, ?, ?, ?, ?, ?)""",
+        (match_id, capture_id, team_id, player_id, minute, event_type),
+    )
+    conn.commit()
+    return cur.lastrowid

@@ -128,4 +128,10 @@ TEAM_SUMMARY_REGIONS = {
 
 TEAM_EVENTS_REGIONS = {
     "event_band": (0.03, 0.19, 0.97, 0.95),
+    # The small goal/card icon sits between the player's face photo and the
+    # minute circle. Estimated from the one confirmed sample (a goal) — the
+    # face photo sits just to its left, so this box is deliberately narrow
+    # to avoid picking up skin-tone pixels from the photo. Unverified
+    # against a real card-event screenshot.
+    "event_icon": (0.44, 0.34, 0.485, 0.41),
 }

@@ -103,11 +103,19 @@ python -c "from fifa_analytics.db.models import init_db; init_db('data/fifa.db')
 
 ## Known gaps going into real use
 
-- **Team Events layout is unconfirmed for matches with 2+ events** — only one
-  single-event sample screenshot was available while building this. The pipeline
-  currently just OCR-dumps the whole events band as raw text (see
-  `ocr/regions.py`) rather than parsing structured (player, minute, event_type)
-  rows. Send a screenshot from a match with multiple goals/cards to nail this down.
+- **Team Events: goals vs. cards are distinguished, but only for one event
+  per screenshot, and card colors are unverified.** `ocr/event_parse.py`
+  parses the player name + minute out of the raw OCR text, matches the
+  player against both rosters to get their team, and classifies the
+  event icon by color (`goal` = achromatic ball icon — confirmed against a
+  real screenshot; `yellow_card`/`red_card` = EA's standard color-coding —
+  plausible but not yet checked against an actual card-event screenshot).
+  A structured row lands in `match_events` when all of that resolves; the
+  raw text is always kept regardless. What's still unconfirmed is whether a
+  match with 2+ events shows them as multiple rows in the same screenshot
+  (in which case only the first would currently be parsed) or one at a time
+  via the toggle controls visible in the screenshot — send a multi-event
+  screenshot to settle this.
 - **No xA (expected assists) field exists on any captured screen** — if
   expected-assist over/underperformance matters to the model, it isn't coming from
   OCR and would need another source or to be dropped.

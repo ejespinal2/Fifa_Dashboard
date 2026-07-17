@@ -47,12 +47,14 @@ from fifa_analytics.cards.eafc26_datahub_importer import (
 from fifa_analytics.db.models import (
     connect,
     create_capture,
+    create_match_event,
     get_team_id_by_name,
     players_for_teams,
     upsert_player,
     write_stat_values,
 )
 from fifa_analytics.ocr import regions
+from fifa_analytics.ocr.event_parse import classify_event_icon, parse_event_text
 from fifa_analytics.ocr.extract import read_field, read_text
 from fifa_analytics.ocr.player_match import match_player
 from fifa_analytics.ocr.preprocess import clean_for_ocr, crop_fractional
@@ -188,22 +190,55 @@ def process_team_summary(conn, match_id: int, home_team_id: int, away_team_id: i
     return capture_ids
 
 
-def process_team_events(conn, match_id: int, image_path: str) -> int:
-    """Stores the raw OCR text dump only — see regions.py docstring on why
-    this isn't parsed into structured (player, minute, event_type) rows yet.
-    Not tied to a single team_id since one screenshot can show either side's
-    events.
+def process_team_events(conn, match_id: int, image_path: str, candidates: list) -> tuple[int, dict | None]:
+    """candidates: combined rosters (players_for_teams(conn, [home_team_id,
+    away_team_id])) — used to look up which team the named player belongs
+    to, since a team_events screenshot doesn't show a team header the way
+    player_summary does.
+
+    Always stores the raw OCR text dump of the whole event band (as
+    before). Additionally attempts to parse ONE structured event — player,
+    minute, and goal/yellow_card/red_card — into the match_events table.
+    See this module's docstring and event_parse.py for what's confirmed
+    (goal icon, from one real sample) vs. unverified (card icon colors;
+    whether multiple events even fit in event_band).
+
+    Returns (capture_id, event_info) — event_info is None if the name/minute
+    couldn't be parsed from the OCR text, or the parsed name didn't match
+    either roster.
     """
     image = cv2.imread(image_path)
-    crop = crop_fractional(image, regions.TEAM_EVENTS_REGIONS["event_band"])
-    raw_text, confidence = read_text(clean_for_ocr(crop))
+
+    band_crop = crop_fractional(image, regions.TEAM_EVENTS_REGIONS["event_band"])
+    raw_text, confidence = read_text(clean_for_ocr(band_crop))
     capture_id = create_capture(conn, match_id, "team_events", image_path, raw_text=raw_text)
     conn.execute(
         "UPDATE ocr_captures SET ocr_confidence_avg = ? WHERE capture_id = ?",
         (confidence, capture_id),
     )
     conn.commit()
-    return capture_id
+
+    event_info = None
+    name, minute = parse_event_text(raw_text)
+    if name is None or minute is None:
+        print(f"team_events: couldn't parse a player name + minute from OCR text {raw_text!r}")
+        return capture_id, event_info
+
+    player_match = match_player(name, candidates)
+    if player_match.player_id is None:
+        print(f"team_events: parsed {name!r} at minute {minute} but couldn't match to either roster.")
+        return capture_id, event_info
+
+    icon_crop = crop_fractional(image, regions.TEAM_EVENTS_REGIONS["event_icon"])
+    event_type = classify_event_icon(icon_crop)
+    create_match_event(conn, match_id, capture_id, player_match.team_id, player_match.player_id, minute, event_type)
+    event_info = {
+        "player_id": player_match.player_id,
+        "team_id": player_match.team_id,
+        "minute": minute,
+        "event_type": event_type,
+    }
+    return capture_id, event_info
 
 
 # PS5 screenshots, "Save As" from a browser, etc. don't reliably land as
@@ -252,7 +287,7 @@ def run_match_dir(db_path: str, match_dir: str, match_id: int, home_team_name: s
 
         team_events = _find_single_file(match_path, "team_events")
         if team_events is not None:
-            process_team_events(conn, match_id, str(team_events))
+            process_team_events(conn, match_id, str(team_events), candidates)
         else:
             print(f"No team_events.(png/jpg/jpeg) found in {match_dir}")
 

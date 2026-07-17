@@ -52,6 +52,7 @@ def calibrate_team_summary(image):
 
 def calibrate_team_events(image):
     _draw_box(image, regions.TEAM_EVENTS_REGIONS["event_band"], "event_band", color=(255, 0, 0))
+    _draw_box(image, regions.TEAM_EVENTS_REGIONS["event_icon"], "event_icon")
 
 
 if __name__ == "__main__":

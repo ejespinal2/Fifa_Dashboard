@@ -69,6 +69,21 @@ def main(match_dir: str):
     ):
         print(dict(row))
 
+    print("\n--- Parsed match events (player, minute, goal/card) ---")
+    rows = conn.execute(
+        """SELECT me.event_id, p.name AS player, t.name AS team, me.minute, me.event_type
+           FROM match_events me
+           LEFT JOIN players p ON p.player_id = me.player_id
+           LEFT JOIN teams t ON t.team_id = me.team_id
+           WHERE me.match_id = ?""",
+        (match_id,),
+    ).fetchall()
+    if rows:
+        for row in rows:
+            print(dict(row))
+    else:
+        print("(none parsed -- check the team_events warning printed above)")
+
     conn.close()
     print(f"\nDone. Run: streamlit run src/fifa_analytics/validate_app.py -- --db {DB_PATH}")
 
