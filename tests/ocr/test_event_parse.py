@@ -46,3 +46,12 @@ def test_classify_all_dark_background_is_unknown():
 
 def test_classify_empty_crop_is_unknown():
     assert classify_event_icon(np.zeros((0, 0, 3), dtype=np.uint8)) == "unknown"
+
+
+def test_classify_small_white_icon_on_noisy_dark_background():
+    # Simulates the real failure: mostly dim background with a white ball
+    # icon occupying ~10% of the crop. The old mean-color approach returned
+    # "unknown" here; pixel-class counting should see the ball.
+    crop = np.random.randint(20, 90, size=(30, 30, 3), dtype=np.uint8)
+    crop[10:19, 10:20] = (230, 230, 230)
+    assert classify_event_icon(crop) == "goal"

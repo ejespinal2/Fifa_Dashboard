@@ -4,7 +4,36 @@ A free, locally-run system that turns EA FC Career Mode post-match screenshots i
 a "true overall" model for your squad — sub-attributes that evolve match by match
 based on actual performance vs. card ratings — plus team analysis and squad
 recommendations. See the full spec for the long-term vision; this repo currently
-implements **Phase 1: data foundation** only.
+implements **Phase 1 (data foundation)** and **Phase 2 (true-overall model, v1)**.
+
+## Phase 2: the true-overall model
+
+`python -m fifa_analytics.model.true_overall data/fifa.db` recomputes every
+player's per-match true-attribute history into `true_overall_history` (safe to
+re-run any time — rows are replaced, not duplicated). How it works:
+
+- **Per-match performance scores** (`model/features.py`): each of the six
+  sub-attributes gets a 0-1 score from that match's captured stats, but only
+  when there's *evidence* — a striker who took no shots produces no shooting
+  score that match, rather than a bad one. Volume stats are normalized per-90
+  so substitute appearances aren't judged as half-performances, and the
+  in-game match rating blends into every scored attribute as EA's holistic
+  read on the performance.
+- **Bayesian blending** (`model/true_overall.py`): true attribute =
+  card value (prior) blended with accumulated performance, weighted by
+  minutes of evidence — `w = n_eff / (n_eff + 5)` where n_eff is full-match
+  equivalents. One match barely moves a rating; a season of matches dominates
+  it. This is the spec's §4.1 cold-start design.
+- **Position-weighted overall**: a CB's composite weights defending/physical
+  heavily, a winger's weights pace/dribbling (`OVERALL_WEIGHTS`), mirroring
+  how EA weights card overalls by position.
+- **Regens** (academy players with no card data) get pure performance
+  estimates with low confidence instead of a prior.
+- Only **reviewed** captures feed the model by default — unreviewed OCR is
+  excluded with a printed note (`--include-unreviewed` to preview anyway).
+
+The spec's ridge-regression upgrade (§4.3) needs multi-season history to
+train against; this interpretable blend is the intended v1, not a shortcut.
 
 ## Phase 1 scope
 

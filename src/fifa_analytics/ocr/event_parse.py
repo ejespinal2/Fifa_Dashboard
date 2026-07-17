@@ -36,31 +36,43 @@ def parse_event_text(raw_text: str) -> tuple[str | None, int | None]:
     return (name or None), minute
 
 
+# The icon must occupy at least this fraction of the crop's pixels for a
+# classification to be trusted — anything smaller is likely just background
+# noise (stadium lights, kit colors) bleeding through the dark overlay.
+MIN_ICON_PIXEL_FRACTION = 0.03
+
+
 def classify_event_icon(icon_crop: np.ndarray) -> str:
-    """Returns "goal" (achromatic ball icon), "yellow_card", "red_card", or
-    "unknown" (anything that doesn't clearly match — including whatever an
-    assist-specific icon might look like, if EA uses a distinct one; no
-    sample of that has been seen yet either).
+    """Returns "goal" (achromatic white ball icon), "yellow_card",
+    "red_card", or "unknown".
+
+    Counts pixels per color class rather than averaging color over all
+    bright pixels: a real run showed the mean-based approach getting washed
+    out to "unknown" by background pixels (crowd, kits) bleeding through
+    the translucent overlay, even though the white ball icon was plainly
+    in-crop. Class thresholds are strict enough (bright + saturated for
+    cards, bright + unsaturated for the ball) that dimmed background rarely
+    qualifies for any class at all.
     """
     if icon_crop is None or icon_crop.size == 0:
         return "unknown"
 
     hsv = cv2.cvtColor(icon_crop, cv2.COLOR_BGR2HSV)
-    hue, sat, val = hsv[:, :, 0].astype(float), hsv[:, :, 1].astype(float), hsv[:, :, 2].astype(float)
+    hue = hsv[:, :, 0].astype(int)
+    sat = hsv[:, :, 1].astype(int)
+    val = hsv[:, :, 2].astype(int)
 
-    # Ignore the dark translucent panel background around the icon itself —
-    # only look at pixels bright enough to plausibly be part of the icon.
-    mask = val > 60
-    if not mask.any():
+    white = (sat < 60) & (val > 150)
+    yellow = (hue >= 15) & (hue <= 40) & (sat > 100) & (val > 100)
+    red = ((hue <= 10) | (hue >= 170)) & (sat > 100) & (val > 100)
+
+    counts = {
+        "goal": int(np.count_nonzero(white)),
+        "yellow_card": int(np.count_nonzero(yellow)),
+        "red_card": int(np.count_nonzero(red)),
+    }
+    best = max(counts, key=counts.get)
+    total_pixels = icon_crop.shape[0] * icon_crop.shape[1]
+    if counts[best] < MIN_ICON_PIXEL_FRACTION * total_pixels:
         return "unknown"
-
-    mean_hue = float(np.mean(hue[mask]))
-    mean_sat = float(np.mean(sat[mask]))
-
-    if mean_sat < 40:
-        return "goal"
-    if 15 <= mean_hue <= 40:
-        return "yellow_card"
-    if mean_hue <= 10 or mean_hue >= 170:
-        return "red_card"
-    return "unknown"
+    return best

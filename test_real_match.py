@@ -20,6 +20,7 @@ from fifa_analytics.db.models import (
     get_team_id_by_name,
 )
 from fifa_analytics.cards.eafc26_datahub_importer import scrape_and_store
+from fifa_analytics.model.true_overall import recompute_all
 from fifa_analytics.ocr.pipeline import run_match_dir
 
 DB_PATH = "data/fifa.db"
@@ -85,6 +86,19 @@ def main(match_dir: str):
         print("(none parsed -- check the team_events warning printed above)")
 
     conn.close()
+
+    print("\n--- True-overall model (PREVIEW on unreviewed OCR data) ---")
+    rows_written = recompute_all(DB_PATH, include_unreviewed=True)
+    print(f"({rows_written} history row(s) written)")
+    conn = connect(DB_PATH)
+    for row in conn.execute(
+        """SELECT p.name, p.base_overall, toh.*
+           FROM true_overall_history toh JOIN players p ON p.player_id = toh.player_id
+           ORDER BY toh.player_id, toh.match_id"""
+    ):
+        print(dict(row))
+    conn.close()
+
     print(f"\nDone. Run: streamlit run src/fifa_analytics/validate_app.py -- --db {DB_PATH}")
 
 
