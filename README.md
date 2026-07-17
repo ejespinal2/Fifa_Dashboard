@@ -28,9 +28,13 @@ python -c "from fifa_analytics.db.models import init_db; init_db('data/fifa.db')
 
 ## Capturing a match
 
-1. Screenshot your squad's card overalls source (sofifa) and run the scraper:
+1. sofifa sits behind Cloudflare and blocks automated fetches (confirmed —
+   both plain `requests` and `cloudscraper` get a 403). Rather than fight
+   that: open your team's sofifa page in a normal browser, **Save Page As →
+   Webpage, HTML only**, and point the scraper at that saved file (a live
+   URL still works too, in case Cloudflare's rules ease up later):
    ```bash
-   python -m fifa_analytics.cards.sofifa_scraper <team_url> data/fifa.db "sofifa:2026"
+   python -m fifa_analytics.cards.sofifa_scraper path/to/saved_team_page.html data/fifa.db "sofifa:2026"
    ```
 2. Organize each match's screenshots under
    `data/screenshots/season_XX/matchweek_YY/match_ZZZZ/` following the naming
