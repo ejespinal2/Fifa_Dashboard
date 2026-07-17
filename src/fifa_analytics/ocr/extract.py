@@ -26,8 +26,15 @@ def read_text(crop: np.ndarray) -> tuple[str, float]:
 
 
 def parse_numeric(raw_text: str) -> float | None:
-    """Extracts a single number from OCR text, stripping a trailing % if present."""
-    cleaned = raw_text.replace(",", "").strip()
+    """Extracts a single number from OCR text, ignoring surrounding label
+    text and a trailing %.
+
+    A comma is treated as a decimal point, not a thousands separator: no
+    value on these stat screens is ever >=1,000 (the largest are pass counts
+    around ~120), while OCR misreading "6.0" as "6,0" is plausible — and
+    stripping the comma there would silently turn a 6.0 rating into 60.
+    """
+    cleaned = raw_text.replace(",", ".").strip()
     match = re.search(r"-?\d+\.?\d*", cleaned)
     return float(match.group()) if match else None
 

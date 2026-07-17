@@ -153,6 +153,13 @@ def process_player_summary(
         regions.PLAYER_SUMMARY_STAT_ORDER,
         regions.PLAYER_SUMMARY_REGIONS["stat_value_col_player"],
     )
+
+    # The in-game match rating ("Total Rating: 7.5") sits outside the stat
+    # list, in its own header region — parse_numeric pulls the 7.5 out of the
+    # surrounding label text.
+    rating_crop = crop_fractional(image, regions.PLAYER_SUMMARY_REGIONS["total_rating"])
+    stats["match_rating"] = read_field(clean_for_ocr(rating_crop))
+
     write_stat_values(conn, capture_id, stats)
     return capture_id, confidence
 
