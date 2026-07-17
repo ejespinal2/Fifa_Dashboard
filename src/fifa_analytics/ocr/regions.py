@@ -47,6 +47,10 @@ PLAYER_SUMMARY_STAT_ORDER = [
 ]
 
 PLAYER_SUMMARY_REGIONS = {
+    # Team name + crest, top-right of the header (e.g. "MAN UTD"). Used to
+    # work out which of the match's two teams this screenshot belongs to
+    # (see ocr/team_match.py) — not calibrated against a real screenshot yet.
+    "team_header": (0.80, 0.03, 0.95, 0.10),
     # "Total Rating: 7.5" text, upper-center. Extended down slightly from the
     # first calibration pass, which was cutting it close.
     "total_rating": (0.385, 0.195, 0.55, 0.26),

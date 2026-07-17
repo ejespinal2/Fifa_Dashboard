@@ -44,7 +44,7 @@ def upsert_player(
     conn: sqlite3.Connection,
     name: str,
     position: str,
-    base_overall: int,
+    base_overall: int | None,
     source: str,
     team_id: int | None = None,
     jersey_number: int | None = None,
@@ -132,11 +132,12 @@ def create_capture(
     player_id: int | None = None,
     team_id: int | None = None,
     raw_text: str | None = None,
+    match_confidence: str | None = None,
 ) -> int:
     cur = conn.execute(
-        """INSERT INTO ocr_captures (match_id, capture_type, player_id, team_id, screenshot_path, raw_text)
-           VALUES (?, ?, ?, ?, ?, ?)""",
-        (match_id, capture_type, player_id, team_id, screenshot_path, raw_text),
+        """INSERT INTO ocr_captures (match_id, capture_type, player_id, team_id, screenshot_path, raw_text, match_confidence)
+           VALUES (?, ?, ?, ?, ?, ?, ?)""",
+        (match_id, capture_type, player_id, team_id, screenshot_path, raw_text, match_confidence),
     )
     conn.commit()
     return cur.lastrowid

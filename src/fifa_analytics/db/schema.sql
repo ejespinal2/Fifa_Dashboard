@@ -17,7 +17,10 @@ CREATE TABLE players (
     team_id         INTEGER REFERENCES teams(team_id),   -- current club, from the card-data import
     position        TEXT NOT NULL,          -- GK/CB/FB/DM/CM/AM/W/ST
     jersey_number   INTEGER,
-    base_overall    INTEGER NOT NULL,
+    -- Nullable: a Career Mode academy graduate/regen has no card-data source
+    -- at all, so this starts NULL and gets backfilled once the true-overall
+    -- model (Phase 2) or a manual entry has something to put here.
+    base_overall    INTEGER,
     base_pace       INTEGER,
     base_shooting   INTEGER,
     base_passing    INTEGER,
@@ -55,11 +58,17 @@ CREATE TABLE ocr_captures (
     capture_id          INTEGER PRIMARY KEY,
     match_id            INTEGER NOT NULL REFERENCES matches(match_id),
     capture_type        TEXT NOT NULL CHECK (capture_type IN ('player_summary', 'team_summary', 'team_events')),
-    player_id           INTEGER REFERENCES players(player_id),   -- set for player_summary, NULL otherwise
-    team_id             INTEGER REFERENCES teams(team_id),       -- set for team_summary/team_events, NULL otherwise
+    player_id           INTEGER REFERENCES players(player_id),   -- set for player_summary once matched, NULL otherwise
+    team_id             INTEGER REFERENCES teams(team_id),       -- set for team_summary and (once its header is matched) player_summary; NULL for team_events
     screenshot_path     TEXT NOT NULL,
     ocr_confidence_avg  REAL,
     raw_text            TEXT,               -- unparsed OCR dump; only used for team_events (see ocr/regions.py)
+    -- player_summary only: how player_id was resolved -- 'exact'/'surname'/
+    -- 'fuzzy' (roster match), 'reassigned' (re-homed from another club in
+    -- the full dataset), 'new_player' (no card data anywhere, bare record
+    -- created), or 'unresolved_team' (needs manual assignment). See
+    -- ocr/pipeline.py's module docstring for the full fallback chain.
+    match_confidence    TEXT,
     reviewed            INTEGER NOT NULL DEFAULT 0,
     reviewed_at         TEXT
 );

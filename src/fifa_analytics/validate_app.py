@@ -29,7 +29,7 @@ def get_conn(db_path: str) -> sqlite3.Connection:
 def load_unreviewed_captures(conn: sqlite3.Connection):
     return conn.execute(
         """SELECT capture_id, match_id, capture_type, player_id, team_id,
-                  screenshot_path, ocr_confidence_avg, raw_text
+                  screenshot_path, ocr_confidence_avg, raw_text, match_confidence
            FROM ocr_captures
            WHERE reviewed = 0
            ORDER BY ocr_confidence_avg ASC NULLS FIRST"""
@@ -101,7 +101,14 @@ def main():
                 selected_player_id = options[choice]["player_id"]
                 st.caption(f"Will assign to {choice} on confirm.")
         elif capture["capture_type"] == "player_summary":
+            note = {
+                "reassigned": "⚠️ Auto-reassigned from another club (a transferred player found elsewhere in the card dataset) — worth a double-check.",
+                "new_player": "⚠️ No card data found anywhere — created as a brand-new player (likely a Career Mode academy graduate). Verify the name spelling.",
+                "fuzzy": "⚠️ Matched by approximate name similarity, not an exact one — worth a double-check.",
+            }.get(capture["match_confidence"])
             st.caption(f"OCR read name as: {capture['raw_text']}")
+            if note:
+                st.info(note)
 
         if capture["capture_type"] == "team_events":
             st.text_area("Raw OCR text (not yet parsed into structured events)", capture["raw_text"] or "", height=150)

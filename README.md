@@ -56,9 +56,21 @@ python -c "from fifa_analytics.db.models import init_db; init_db('data/fifa.db')
    - `team_summary.png`
    - `team_events.png`
    - `player_summary_*.png` — one per player who featured, either team.
-     Filenames don't need to encode who's in them or which team — each one's
-     player is identified by OCR'ing the on-screen name and matching it
-     against the two teams' rosters (`ocr/player_match.py`), not by filename.
+     Filenames don't need to encode who's in them or which team — each
+     screenshot identifies itself, in 3 steps (see `ocr/pipeline.py`'s module
+     docstring for the full chain):
+     1. OCR the header team name/crest, match it against the match's two
+        team names (`ocr/team_match.py`) — tells us which roster to check.
+     2. Match the OCR'd player name against that team's already-imported
+        roster (`ocr/player_match.py`) — the common case.
+     3. If no roster match: search the *entire* card dataset by name. A hit
+        means this player was transferred within your save (the dataset
+        still lists them under their old real-world club) — they get
+        automatically re-imported under the correct in-game team, so their
+        *next* appearance matches directly in step 2. A miss means nobody's
+        ever heard of them (a Career Mode academy graduate) — a bare player
+        row is created with just the name and team; card attributes stay
+        blank until a later phase or manual entry fills them in.
 4. **Before running OCR on real data**, calibrate the crop regions against your
    actual screenshots — the coordinates in `ocr/regions.py` are visual estimates,
    not pixel-measured:
@@ -75,15 +87,19 @@ python -c "from fifa_analytics.db.models import init_db; init_db('data/fifa.db')
    run_match_dir("data/fifa.db", "data/screenshots/season_01/matchweek_03/match_0042",
                  match_id, "Manchester United", "Bayer 04 Leverkusen")
    ```
-   Any player_summary screenshot whose name can't be matched to either roster
-   still gets stored (stats intact, `player_id` left blank) rather than
-   dropped — it'll show up in the validation step below for manual assignment.
+   The only case that still needs a human is when even the *team* can't be
+   told apart (step 1 above fails, e.g. a badly garbled header read) — that
+   screenshot still gets stored (stats intact, `player_id`/`team_id` left
+   blank) rather than dropped.
 6. Review and correct OCR output before it's trusted:
    ```bash
    streamlit run src/fifa_analytics/validate_app.py -- --db data/fifa.db
    ```
-   This is also where unmatched player_summary captures get manually assigned
-   to the correct roster player before being marked reviewed.
+   This is also where fully-unresolved captures get manually assigned to the
+   correct player. Captures that *were* auto-resolved but via the fuzzy,
+   reassigned, or brand-new-player paths still show up with a flagged note
+   ("worth a double-check") rather than looking identical to a confident
+   exact match.
 
 ## Known gaps going into real use
 
@@ -95,16 +111,21 @@ python -c "from fifa_analytics.db.models import init_db; init_db('data/fifa.db')
 - **No xA (expected assists) field exists on any captured screen** — if
   expected-assist over/underperformance matters to the model, it isn't coming from
   OCR and would need another source or to be dropped.
-- **A player transferred in your save won't be found under their new club** —
-  confirmed with a real test: EAFC26-DataHub reflects each player's actual
-  real-world club, not your Career Mode save's transfers. A player you've
-  signed shows up in the dataset under their old (real-world) club, so
-  `players_for_teams` — which only looks at the two teams already imported for
-  this match — won't find them, and their screenshot lands in validate_app.py
-  as unmatched. Currently there's no automatic fallback for this; if it comes
-  up a lot, the fix would be searching the full dataset by name when the
-  narrow roster search misses, then re-homing that player to the in-game team
-  instead of their stale listed club.
+- **The `team_header` crop region (used to tell which team a player_summary
+  screenshot belongs to) is unverified against a real screenshot** — like the
+  other regions before their first calibration pass, this one's a visual
+  estimate. If matching keeps landing on `unresolved_team`, this is the first
+  place to check with `ocr/calibrate.py`.
+- **Transferred players are handled, with one caveat**: a player re-homed via
+  the full-dataset fallback (see above) is matched on an exact name, or a
+  surname+first-initial match that's unique across the whole ~18,000-player
+  dataset — deliberately conservative, since a wrong guess silently attaches
+  someone else's attributes. A transferred player with a very common
+  name+initial combination could still fail both tiers and fall through to
+  `new_player` (a bare record, no card stats) instead of `reassigned`. Verified
+  end-to-end with a real case (a player transferred to Man Utd in a save,
+  correctly found under their actual real-world club and re-homed with their
+  real attributes intact).
 
 ## Database
 

@@ -25,6 +25,7 @@ import sys
 import requests
 
 from fifa_analytics.db.models import connect, get_or_create_team, upsert_player
+from fifa_analytics.ocr.player_match import normalize
 
 RAW_CSV_URL = "https://raw.githubusercontent.com/ismailoksuz/EAFC26-DataHub/main/data/players.csv"
 
@@ -56,6 +57,67 @@ def players_for_club(rows: list[dict], club_name: str) -> list[dict]:
     return matches
 
 
+def upsert_player_from_row(conn, row: dict, team_id: int, source_label: str) -> int:
+    """Shared by scrape_and_store and the transferred-player fallback in
+    pipeline.py, so both write a card row the same way."""
+    return upsert_player(
+        conn,
+        name=row["short_name"],
+        team_id=team_id,
+        position=row.get("club_position") or "UNK",
+        base_overall=_to_int(row["overall"]),
+        base_pace=_to_int(row.get("pace")),
+        base_shooting=_to_int(row.get("shooting")),
+        base_passing=_to_int(row.get("passing")),
+        base_dribbling=_to_int(row.get("dribbling")),
+        base_defending=_to_int(row.get("defending")),
+        base_physical=_to_int(row.get("physic")),
+        age=_to_int(row.get("age")),
+        potential=_to_int(row.get("potential")),
+        jersey_number=_to_int(row.get("club_jersey_number")),
+        source=source_label,
+    )
+
+
+def find_by_exact_name(rows: list[dict], ocr_name: str) -> dict | None:
+    """Searches the FULL dataset (not just an already-imported team's rows)
+    for a player by name — used when someone's been transferred within a
+    Career Mode save, since the dataset still lists them under their old
+    real-world club (see README's "Known gaps"). Unlike the roster-scoped
+    matching in ocr/player_match.py, this deliberately avoids surname-only
+    or fuzzy matching: with ~18,000 candidates, a common surname alone risks
+    silently attaching the wrong player's attributes, which is worse than
+    leaving it for manual review.
+
+    Two tiers, both requiring uniqueness across the whole dataset before
+    accepting a match:
+    1. Exact normalized full name.
+    2. Same surname AND same first-name initial — covers the common case
+       where in-game shows a full first name ("Aurelien Tchouameni") but the
+       card source abbreviates it ("A. Tchouameni"). Requiring both the
+       surname and the initial to agree, on top of the uniqueness check,
+       keeps this safe even though surnames alone collide often in a
+       dataset this size.
+    """
+    normalized_ocr = normalize(ocr_name)
+    exact = [r for r in rows if normalize(r["short_name"]) == normalized_ocr]
+    if exact:
+        return exact[0] if len(exact) == 1 else None
+
+    ocr_tokens = normalized_ocr.split()
+    if len(ocr_tokens) < 2:
+        return None
+    ocr_surname, ocr_initial = ocr_tokens[-1], ocr_tokens[0][0]
+
+    surname_and_initial_matches = []
+    for r in rows:
+        tokens = normalize(r["short_name"]).split()
+        if len(tokens) >= 2 and tokens[-1] == ocr_surname and tokens[0][0] == ocr_initial:
+            surname_and_initial_matches.append(r)
+
+    return surname_and_initial_matches[0] if len(surname_and_initial_matches) == 1 else None
+
+
 def scrape_and_store(club_name: str, db_path: str, source_label: str, csv_source: str = RAW_CSV_URL) -> int:
     rows = load_rows(csv_source)
     players = players_for_club(rows, club_name)
@@ -67,23 +129,7 @@ def scrape_and_store(club_name: str, db_path: str, source_label: str, csv_source
         # links to matches exactly what players_for_club actually matched on.
         team_id = get_or_create_team(conn, players[0]["club_name"], players[0].get("league_name"))
         for p in players:
-            upsert_player(
-                conn,
-                name=p["short_name"],
-                team_id=team_id,
-                position=p.get("club_position") or "UNK",
-                base_overall=_to_int(p["overall"]),
-                base_pace=_to_int(p.get("pace")),
-                base_shooting=_to_int(p.get("shooting")),
-                base_passing=_to_int(p.get("passing")),
-                base_dribbling=_to_int(p.get("dribbling")),
-                base_defending=_to_int(p.get("defending")),
-                base_physical=_to_int(p.get("physic")),
-                age=_to_int(p.get("age")),
-                potential=_to_int(p.get("potential")),
-                jersey_number=_to_int(p.get("club_jersey_number")),
-                source=source_label,
-            )
+            upsert_player_from_row(conn, p, team_id, source_label)
     finally:
         conn.close()
     return len(players)

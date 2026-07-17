@@ -7,31 +7,59 @@ Expected folder contents for one match, e.g.
         team_events.png
         player_summary_*.png      # one per player who featured, for EITHER team —
                                    # filenames don't need to encode who's in them;
-                                   # the player is identified by OCR'ing the
-                                   # on-screen name and matching it against
-                                   # the two teams' rosters (see player_match.py)
+                                   # each one's player AND team are identified
+                                   # from the screenshot itself (see below)
 
 This only OCRs and stores stat_name -> (value, confidence) pairs, plus a raw
 text dump for team_events (see regions.py for why events aren't parsed into
 structured rows yet). Nothing here is marked reviewed=1 — that happens in
 validate_app.py after a human confirms the values.
+
+Every player_summary screenshot goes through 3 layers before falling back to
+manual review:
+    1. OCR the header team name/crest, match it against the match's two
+       known team names (team_match.py) -> tells us which roster to check.
+    2. Match the OCR'd player name against that team's already-imported
+       roster (player_match.py) -> the common case.
+    3. If no roster match: search the FULL card dataset by exact name. A hit
+       means this player transferred within your save and the dataset still
+       lists them under their old real-world club — they get re-imported
+       under the correct in-game team_id, so future matches find them
+       directly in step 2. A miss means nobody's ever heard of them (a
+       Career Mode academy graduate/regen) — a bare player row is created
+       with just the name, team, and OCR'd stats; base_overall etc. stay
+       NULL until a "true overall" model or manual entry backfills them.
+Only if step 1 itself fails (the header OCR is too garbled to tell the two
+teams apart) does a capture fall all the way through to unresolved, needing
+a human to assign it in validate_app.py.
 """
 
 from pathlib import Path
 
 import cv2
 
+from fifa_analytics.cards.eafc26_datahub_importer import (
+    RAW_CSV_URL,
+    find_by_exact_name,
+    load_rows,
+    upsert_player_from_row,
+)
 from fifa_analytics.db.models import (
     connect,
     create_capture,
     get_team_id_by_name,
     players_for_teams,
+    upsert_player,
     write_stat_values,
 )
 from fifa_analytics.ocr import regions
 from fifa_analytics.ocr.extract import read_field, read_text
 from fifa_analytics.ocr.player_match import match_player
 from fifa_analytics.ocr.preprocess import clean_for_ocr, crop_fractional
+from fifa_analytics.ocr.team_match import match_team_header
+
+REASSIGNED_SOURCE_LABEL = "eafc26-datahub:reassigned"
+REGEN_SOURCE_LABEL = "ocr:regen"
 
 
 def _split_row_value_cols(
@@ -49,32 +77,74 @@ def _split_row_value_cols(
     return out
 
 
-def process_player_summary(conn, match_id: int, image_path: str, candidates: list) -> tuple[int, str]:
-    """candidates: rows from players_for_teams(conn, [home_team_id, away_team_id]).
+def resolve_player(conn, ocr_name: str, team_id: int, candidates: list, csv_rows: list) -> tuple[int, str]:
+    """candidates: this team's rows from players_for_teams (already filtered
+    to team_id by the caller). Returns (player_id, confidence) where
+    confidence is one of player_match's ("exact"/"surname"/"fuzzy"), or
+    "reassigned" (found elsewhere in the dataset, re-homed to team_id), or
+    "new_player" (not found anywhere -- a bare record was created).
+    """
+    roster_match = match_player(ocr_name, candidates)
+    if roster_match.player_id is not None:
+        return roster_match.player_id, roster_match.confidence
 
-    Returns (capture_id, match_confidence) — match_confidence is one of
-    "exact"/"surname"/"fuzzy"/"none" (see player_match.match_player). A
-    "none" match still creates the capture (player_id left NULL, the OCR'd
-    name saved to raw_text) so it surfaces in validate_app.py for manual
-    assignment instead of silently dropping the screenshot's data.
+    transferred_row = find_by_exact_name(csv_rows, ocr_name)
+    if transferred_row is not None:
+        player_id = upsert_player_from_row(conn, transferred_row, team_id, REASSIGNED_SOURCE_LABEL)
+        return player_id, "reassigned"
+
+    player_id = upsert_player(
+        conn, name=ocr_name, position="UNK", base_overall=None, source=REGEN_SOURCE_LABEL, team_id=team_id
+    )
+    return player_id, "new_player"
+
+
+def process_player_summary(
+    conn,
+    match_id: int,
+    image_path: str,
+    home_team_id: int,
+    home_team_name: str,
+    away_team_id: int,
+    away_team_name: str,
+    candidates: list,
+    csv_rows: list,
+) -> tuple[int, str]:
+    """candidates: rows from players_for_teams(conn, [home_team_id, away_team_id]).
+    csv_rows: the full card dataset (load_rows(RAW_CSV_URL)), for the
+    transferred-player fallback.
+
+    Returns (capture_id, match_confidence) — "unresolved_team" if even the
+    header OCR couldn't tell the two teams apart, in which case the capture
+    still gets created (stats intact, player_id/team_id left NULL) for
+    manual assignment in validate_app.py.
     """
     image = cv2.imread(image_path)
 
-    name_crop = crop_fractional(image, regions.PLAYER_SUMMARY_REGIONS["active_player_name"])
-    ocr_name, name_confidence = read_text(clean_for_ocr(name_crop))
-    match = match_player(ocr_name, candidates)
+    header_crop = crop_fractional(image, regions.PLAYER_SUMMARY_REGIONS["team_header"])
+    header_text, _ = read_text(clean_for_ocr(header_crop))
+    team_match = match_team_header(header_text, home_team_id, home_team_name, away_team_id, away_team_name)
 
-    if match.player_id is None:
-        print(f"Could not match player in {image_path}: OCR read {ocr_name!r} — needs manual assignment.")
+    name_crop = crop_fractional(image, regions.PLAYER_SUMMARY_REGIONS["active_player_name"])
+    ocr_name, _ = read_text(clean_for_ocr(name_crop))
+
+    if team_match.team_id is not None:
+        team_candidates = [c for c in candidates if c["team_id"] == team_match.team_id]
+        player_id, confidence = resolve_player(conn, ocr_name, team_match.team_id, team_candidates, csv_rows)
+        team_id = team_match.team_id
+    else:
+        print(f"Could not tell which team {image_path} belongs to (OCR read {header_text!r}) — needs manual assignment.")
+        player_id, team_id, confidence = None, None, "unresolved_team"
 
     capture_id = create_capture(
         conn,
         match_id,
         "player_summary",
         image_path,
-        player_id=match.player_id,
-        team_id=match.team_id,
+        player_id=player_id,
+        team_id=team_id,
         raw_text=ocr_name,
+        match_confidence=confidence,
     )
 
     stats = _split_row_value_cols(
@@ -84,7 +154,7 @@ def process_player_summary(conn, match_id: int, image_path: str, candidates: lis
         regions.PLAYER_SUMMARY_REGIONS["stat_value_col_player"],
     )
     write_stat_values(conn, capture_id, stats)
-    return capture_id, match.confidence
+    return capture_id, confidence
 
 
 def process_team_summary(conn, match_id: int, home_team_id: int, away_team_id: int, image_path: str) -> list[int]:
@@ -131,8 +201,7 @@ def process_team_events(conn, match_id: int, image_path: str) -> int:
 
 def run_match_dir(db_path: str, match_dir: str, match_id: int, home_team_name: str, away_team_name: str) -> None:
     """home_team_name/away_team_name must already exist in the teams table
-    (i.e. you've run the card importer for both squads first) — players are
-    matched only against these two rosters.
+    (i.e. you've run the card importer for both squads first).
     """
     conn = connect(db_path)
     try:
@@ -143,6 +212,7 @@ def run_match_dir(db_path: str, match_dir: str, match_id: int, home_team_name: s
             raise ValueError(f"Team {missing!r} not found — import its card data first.")
 
         candidates = players_for_teams(conn, [home_team_id, away_team_id])
+        csv_rows = load_rows(RAW_CSV_URL)
         match_path = Path(match_dir)
 
         team_summary = match_path / "team_summary.png"
@@ -154,8 +224,10 @@ def run_match_dir(db_path: str, match_dir: str, match_id: int, home_team_name: s
             process_team_events(conn, match_id, str(team_events))
 
         for file in sorted(match_path.glob("player_summary_*.png")):
-            capture_id, confidence = process_player_summary(conn, match_id, str(file), candidates)
-            if confidence != "exact":
+            capture_id, confidence = process_player_summary(
+                conn, match_id, str(file), home_team_id, home_team_name, away_team_id, away_team_name, candidates, csv_rows
+            )
+            if confidence not in ("exact",):
                 print(f"{file.name}: matched with confidence={confidence} (capture_id={capture_id}) — double-check in validate_app.py")
     finally:
         conn.close()

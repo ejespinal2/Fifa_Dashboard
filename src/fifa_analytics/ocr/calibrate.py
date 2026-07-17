@@ -30,6 +30,7 @@ def _draw_box(image, box, label, color=(0, 255, 0)):
 
 def calibrate_player_summary(image):
     r = regions.PLAYER_SUMMARY_REGIONS
+    _draw_box(image, r["team_header"], "team_header")
     _draw_box(image, r["total_rating"], "total_rating")
     _draw_box(image, r["active_player_name"], "active_player_name")
     _draw_box(image, r["stat_list_box"], "stat_list_box", color=(255, 0, 0))
