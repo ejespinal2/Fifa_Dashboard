@@ -5,13 +5,13 @@
 -- migration every time a captured field set changes; stat_name/stat_value
 -- does not.
 
-CREATE TABLE teams (
+CREATE TABLE IF NOT EXISTS teams (
     team_id   INTEGER PRIMARY KEY,
     name      TEXT NOT NULL UNIQUE,
     league    TEXT
 );
 
-CREATE TABLE players (
+CREATE TABLE IF NOT EXISTS players (
     player_id       INTEGER PRIMARY KEY,
     name            TEXT NOT NULL,
     team_id         INTEGER REFERENCES teams(team_id),   -- current club, from the card-data import
@@ -33,12 +33,12 @@ CREATE TABLE players (
     UNIQUE(name, team_id, source)
 );
 
-CREATE TABLE seasons (
+CREATE TABLE IF NOT EXISTS seasons (
     season_id   INTEGER PRIMARY KEY,
     year_label  TEXT NOT NULL UNIQUE
 );
 
-CREATE TABLE matches (
+CREATE TABLE IF NOT EXISTS matches (
     match_id       INTEGER PRIMARY KEY,
     season_id      INTEGER NOT NULL REFERENCES seasons(season_id),
     matchweek      INTEGER NOT NULL,
@@ -54,7 +54,7 @@ CREATE TABLE matches (
 -- validation state hang off this, not off the match/player pair directly,
 -- since the same match+player can in principle be recaptured (e.g. a bad OCR
 -- read redone from a fresh screenshot).
-CREATE TABLE ocr_captures (
+CREATE TABLE IF NOT EXISTS ocr_captures (
     capture_id          INTEGER PRIMARY KEY,
     match_id            INTEGER NOT NULL REFERENCES matches(match_id),
     capture_type        TEXT NOT NULL CHECK (capture_type IN ('player_summary', 'team_summary', 'team_events')),
@@ -75,7 +75,7 @@ CREATE TABLE ocr_captures (
 
 -- Every stat visible on a Player Summary or Team Summary screen, one row per
 -- field. E.g. (capture_id=1, stat_name='goals', stat_value=1).
-CREATE TABLE match_stat_values (
+CREATE TABLE IF NOT EXISTS match_stat_values (
     capture_id     INTEGER NOT NULL REFERENCES ocr_captures(capture_id),
     stat_name      TEXT NOT NULL,
     stat_value     REAL,
@@ -84,7 +84,7 @@ CREATE TABLE match_stat_values (
 );
 
 -- Parsed from the team_events capture: one row per goal/assist/card event.
-CREATE TABLE match_events (
+CREATE TABLE IF NOT EXISTS match_events (
     event_id    INTEGER PRIMARY KEY,
     match_id    INTEGER NOT NULL REFERENCES matches(match_id),
     capture_id  INTEGER NOT NULL REFERENCES ocr_captures(capture_id),
@@ -96,7 +96,7 @@ CREATE TABLE match_events (
 
 -- Stubbed for later phases — created now, left empty, so Phase 2+ don't need
 -- a migration to start writing to them.
-CREATE TABLE true_overall_history (
+CREATE TABLE IF NOT EXISTS true_overall_history (
     player_id        INTEGER NOT NULL REFERENCES players(player_id),
     match_id         INTEGER NOT NULL REFERENCES matches(match_id),
     true_overall     REAL,
@@ -110,7 +110,7 @@ CREATE TABLE true_overall_history (
     PRIMARY KEY (player_id, match_id)
 );
 
-CREATE TABLE team_match_expected (
+CREATE TABLE IF NOT EXISTS team_match_expected (
     match_id             INTEGER NOT NULL REFERENCES matches(match_id),
     team_id              INTEGER NOT NULL REFERENCES teams(team_id),
     expected_goals_for   REAL,
@@ -120,7 +120,7 @@ CREATE TABLE team_match_expected (
     PRIMARY KEY (match_id, team_id)
 );
 
-CREATE TABLE scouting_candidates (
+CREATE TABLE IF NOT EXISTS scouting_candidates (
     candidate_id     INTEGER PRIMARY KEY,
     player_id        INTEGER,               -- external id from source, not a local players.player_id
     source           TEXT,
