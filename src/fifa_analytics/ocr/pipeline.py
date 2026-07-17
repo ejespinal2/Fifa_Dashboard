@@ -206,6 +206,28 @@ def process_team_events(conn, match_id: int, image_path: str) -> int:
     return capture_id
 
 
+# PS5 screenshots, "Save As" from a browser, etc. don't reliably land as
+# .png -- .jpg/.jpeg are just as likely. Checked case-sensitively per
+# extension since some filesystems (notably not Windows, but worth being
+# explicit) distinguish .JPG from .jpg.
+IMAGE_EXTENSIONS = (".png", ".PNG", ".jpg", ".JPG", ".jpeg", ".JPEG")
+
+
+def _find_single_file(match_path: Path, stem: str) -> Path | None:
+    for ext in IMAGE_EXTENSIONS:
+        candidate = match_path / f"{stem}{ext}"
+        if candidate.exists():
+            return candidate
+    return None
+
+
+def _find_player_summary_files(match_path: Path) -> list[Path]:
+    found = set()
+    for ext in IMAGE_EXTENSIONS:
+        found.update(match_path.glob(f"player_summary_*{ext}"))
+    return sorted(found)
+
+
 def run_match_dir(db_path: str, match_dir: str, match_id: int, home_team_name: str, away_team_name: str) -> None:
     """home_team_name/away_team_name must already exist in the teams table
     (i.e. you've run the card importer for both squads first).
@@ -222,15 +244,22 @@ def run_match_dir(db_path: str, match_dir: str, match_id: int, home_team_name: s
         csv_rows = load_rows(RAW_CSV_URL)
         match_path = Path(match_dir)
 
-        team_summary = match_path / "team_summary.png"
-        if team_summary.exists():
+        team_summary = _find_single_file(match_path, "team_summary")
+        if team_summary is not None:
             process_team_summary(conn, match_id, home_team_id, away_team_id, str(team_summary))
+        else:
+            print(f"No team_summary.(png/jpg/jpeg) found in {match_dir}")
 
-        team_events = match_path / "team_events.png"
-        if team_events.exists():
+        team_events = _find_single_file(match_path, "team_events")
+        if team_events is not None:
             process_team_events(conn, match_id, str(team_events))
+        else:
+            print(f"No team_events.(png/jpg/jpeg) found in {match_dir}")
 
-        for file in sorted(match_path.glob("player_summary_*.png")):
+        player_summary_files = _find_player_summary_files(match_path)
+        if not player_summary_files:
+            print(f"No player_summary_*.(png/jpg/jpeg) files found in {match_dir}")
+        for file in player_summary_files:
             capture_id, confidence = process_player_summary(
                 conn, match_id, str(file), home_team_id, home_team_name, away_team_id, away_team_name, candidates, csv_rows
             )

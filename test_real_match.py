@@ -56,15 +56,16 @@ def main(match_dir: str):
     ):
         print(dict(row))
 
-    print("\n--- Player summary stat values ---")
+    print("\n--- All stat values (team_summary + player_summary) ---")
     for row in conn.execute(
-        """SELECT oc.capture_id, p.name, msv.stat_name, msv.stat_value, msv.ocr_confidence
+        """SELECT oc.capture_id, oc.capture_type, oc.team_id, p.name AS player_name,
+                  msv.stat_name, msv.stat_value, msv.ocr_confidence
            FROM ocr_captures oc
            JOIN match_stat_values msv ON msv.capture_id = oc.capture_id
            LEFT JOIN players p ON p.player_id = oc.player_id
-           WHERE oc.match_id = ? AND oc.capture_type = 'player_summary'
-           ORDER BY oc.capture_id, msv.stat_name"""
-        , (match_id,),
+           WHERE oc.match_id = ?
+           ORDER BY oc.capture_id, msv.stat_name""",
+        (match_id,),
     ):
         print(dict(row))
 
