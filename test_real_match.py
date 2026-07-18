@@ -20,8 +20,10 @@ from fifa_analytics.db.models import (
     get_team_id_by_name,
 )
 from fifa_analytics.analysis.best_xi import best_formation, load_squad, print_xi
+from fifa_analytics.analysis.scouting import academy_prospects, identify_weak_slots, transfer_targets
 from fifa_analytics.analysis.xpts import compute_all as compute_xpts, season_table
 from fifa_analytics.cards.eafc26_datahub_importer import scrape_and_store
+from fifa_analytics.cards.scouting_importer import import_scouting_candidates
 from fifa_analytics.model.true_overall import recompute_all
 from fifa_analytics.ocr.pipeline import run_match_dir
 
@@ -115,6 +117,33 @@ def main(match_dir: str):
     conn.close()
     formation_name, assignments, total = best_formation(squad)
     print_xi(formation_name, assignments, total)
+
+    print(f"\n--- Scouting: importing candidate pool (excluding {HOME_TEAM}/{AWAY_TEAM}) ---")
+    candidate_count = import_scouting_candidates(
+        DB_PATH, "eafc26-datahub:main", exclude_club_names=[HOME_TEAM, AWAY_TEAM]
+    )
+    print(f"  {candidate_count} candidates stored")
+
+    print(f"\n--- Weakest slots for {HOME_TEAM} ({formation_name}) ---")
+    conn = connect(DB_PATH)
+    for w in identify_weak_slots(conn, home_id, formation_name):
+        print(f"  {w.slot_group:>3}  {w.current_player:<28} {w.current_rating:.1f}")
+
+    print(f"\n--- Transfer targets for {HOME_TEAM} (balanced tactic, top 3 per weak group) ---")
+    targets = transfer_targets(conn, home_id, formation_name, tactic="balanced", top_n=3)
+    if not targets:
+        print("  (no weak-group upgrades found in the current candidate pool)")
+    for group, candidates in targets.items():
+        print(f"  Group: {group}")
+        for c in candidates:
+            print(f"    {c['name']:<24} ({c['club']}) eff={c['effective_rating']}  "
+                  f"upgrade over {c['upgrade_over']} ({c['upgrade_over_rating']})")
+
+    print("\n--- Academy/loan prospects (age<=21, potential gap>=8, floor=60 overall) ---")
+    for p in academy_prospects(conn, min_potential_gap=8, max_age=21, top_n=10):
+        print(f"  {p['name']:<24} {p['position']:<4} age {p['age']}  "
+              f"{p['current_overall']}->{p['potential']}  (+{p['growth_room']})  {p['club']}")
+    conn.close()
 
     print(f"\nDone. Run: streamlit run src/fifa_analytics/validate_app.py -- --db {DB_PATH}")
 

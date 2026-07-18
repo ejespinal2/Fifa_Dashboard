@@ -5,7 +5,72 @@ a "true overall" model for your squad — sub-attributes that evolve match by ma
 based on actual performance vs. card ratings — plus team analysis and squad
 recommendations. See the full spec for the long-term vision; this repo currently
 implements **Phase 1 (data foundation)**, **Phase 2 (true-overall model, v1)**,
-and **Phase 3 (team analysis: best XI + xPTS)**.
+**Phase 3 (team analysis: best XI + xPTS)**, and **Phase 4 (scouting/transfer/
+academy engine)**.
+
+## Phase 4: scouting, transfer targets, and academy prospects
+
+A pool of external candidates — the full EAFC26-DataHub player list minus
+whoever's already on your imported squads — scored two different ways,
+matching the spec's §6 distinction between "who should I sign" and "who's
+worth developing":
+
+```bash
+python -m fifa_analytics.cards.scouting_importer data/fifa.db "eafc26-datahub:main" \
+    --exclude-team "Manchester United" --exclude-team "Bayer 04 Leverkusen"
+```
+
+Re-running replaces the previous snapshot for that `source` label rather than
+accumulating duplicates (`clear_scouting_candidates` before each import).
+
+- **Transfer targets** (`analysis/scouting.py: transfer_targets`) — find your
+  current best XI's weakest slot in each position group (reusing Phase 3's
+  `best_xi.pick_best_xi`), then search the candidate pool for anyone who
+  clears two bars: **plausible for the position** (familiarity ≥ 0.7 against
+  the slot — a CB is never suggested for a striker gap, regardless of stats)
+  and **an actual upgrade** (tactic-weighted composite × familiarity beats the
+  current incumbent's effective rating). One result set per *distinct* weak
+  group, not per slot, so a formation with two CB slots doesn't repeat the
+  search.
+- **Tactical fit** (`analysis/tactics.py`) — the position-based attribute
+  weights from Phase 2 (`model/features.OVERALL_WEIGHTS`) get nudged toward
+  what a chosen tactic demands (`possession` values passing/dribbling over
+  physicality, `direct_play` the reverse, etc.) before scoring a candidate,
+  then renormalized back to summing to 1. This is the piece the spec's Phase 3
+  called for but Phase 3's best-XI solver didn't need yet — it only became
+  necessary once transfer scoring had to answer "a good CB for *my* system,"
+  not just "a good CB."
+- **Academy/loan prospects** (`analysis/scouting.py: academy_prospects`) — a
+  deliberately different, more lenient bar: no requirement to beat anyone.
+  Just growth room (`potential - current_overall >= min_potential_gap`, a
+  young age ceiling) plus a floor (`current_overall >= 60`) so a prospect
+  with a great trajectory but nothing today doesn't get suggested as a body
+  that could actually hurt the team if thrown in. `fit_score` isn't persisted
+  on `scouting_candidates` — it depends on your current squad and chosen
+  tactic, both of which change over time, so it's computed fresh on every
+  query instead of going stale in the table.
+
+```python
+from fifa_analytics.db.models import connect
+from fifa_analytics.analysis.scouting import identify_weak_slots, transfer_targets, academy_prospects
+
+conn = connect("data/fifa.db")
+identify_weak_slots(conn, team_id, "4-3-3")                       # weakest first
+transfer_targets(conn, team_id, "4-3-3", tactic="possession")     # {group: [candidates]}
+academy_prospects(conn, min_potential_gap=8, max_age=21)
+```
+
+Verified end-to-end against the live EAFC26-DataHub CSV (Man Utd's real
+current-form roster vs. the ~18,000-player external pool, both clubs
+excluded from their own candidate search): transfer targets correctly
+surfaced real upgrades at other real clubs for each weak slot (e.g. a
+current-form winger and striker beaten by better options elsewhere) while
+respecting position familiarity, and academy prospects returned young,
+high-potential, floor-clearing players sorted by growth room. Yes, this also
+works for opponent teams — nothing in `transfer_targets`/`academy_prospects`
+is Man-Utd-specific, so importing an opposing team's roster and passing
+*their* `team_id` scouts for them the same way; the candidate pool naturally
+excludes whichever club(s) you pass to `--exclude-team` at import time.
 
 ## Phase 3: team analysis
 
@@ -192,6 +257,16 @@ python -c "from fifa_analytics.db.models import init_db; init_db('data/fifa.db')
   end-to-end with a real case (a player transferred to Man Utd in a save,
   correctly found under their actual real-world club and re-homed with their
   real attributes intact).
+- **Goalkeepers never surface as transfer targets.** The EAFC26-DataHub CSV
+  doesn't populate the six outfield sub-attributes (pace/shooting/passing/
+  dribbling/defending/physical) for GK cards — they're blank for every
+  keeper in the dataset, so `attribute_composite` (which requires all six)
+  always returns `None` and no keeper ever scores. Confirmed against the live
+  CSV: real keepers like Ederson and Maignan appear in the pool with all six
+  attributes `None`. Fixing this needs GK-specific attributes (diving/
+  handling/kicking/reflexes) added to the schema and scoring model — a
+  bigger change than Phase 4's scope, noted here rather than silently
+  producing an empty GK result.
 
 ## Database
 

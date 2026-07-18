@@ -120,14 +120,26 @@ CREATE TABLE IF NOT EXISTS team_match_expected (
     PRIMARY KEY (match_id, team_id)
 );
 
+-- Refreshable snapshot of the external card dataset, minus whoever's
+-- already on your own imported squads. fit_score is NOT stored here: it's
+-- always relative to your CURRENT squad's weaknesses and chosen tactic, so
+-- a persisted value would go stale the moment either changes -- see
+-- analysis/scouting.py, which computes it on demand from the columns below.
 CREATE TABLE IF NOT EXISTS scouting_candidates (
     candidate_id     INTEGER PRIMARY KEY,
-    player_id        INTEGER,               -- external id from source, not a local players.player_id
+    name             TEXT NOT NULL,
+    club_name        TEXT,                  -- their current real-world club, per the source
     source           TEXT,
-    position         TEXT,
+    position         TEXT,                  -- preferred position, same convention as players.position
     age              INTEGER,
     current_overall  INTEGER,
     potential        INTEGER,
+    base_pace        INTEGER,
+    base_shooting    INTEGER,
+    base_passing     INTEGER,
+    base_dribbling   INTEGER,
+    base_defending   INTEGER,
+    base_physical    INTEGER,
     estimated_wage   REAL,
-    fit_score        REAL
+    UNIQUE(name, club_name, source)
 );

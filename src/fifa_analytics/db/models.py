@@ -184,3 +184,48 @@ def create_match_event(
     )
     conn.commit()
     return cur.lastrowid
+
+
+def clear_scouting_candidates(conn: sqlite3.Connection, source: str) -> None:
+    """Scouting candidates are a refreshable snapshot, not user-owned data
+    (unlike players) -- re-importing wipes the previous snapshot for that
+    source first, so stale rows never linger after filters change."""
+    conn.execute("DELETE FROM scouting_candidates WHERE source = ?", (source,))
+    conn.commit()
+
+
+def upsert_scouting_candidate(
+    conn: sqlite3.Connection,
+    name: str,
+    club_name: str | None,
+    source: str,
+    position: str,
+    age: int | None,
+    current_overall: int | None,
+    potential: int | None,
+    base_pace: int | None,
+    base_shooting: int | None,
+    base_passing: int | None,
+    base_dribbling: int | None,
+    base_defending: int | None,
+    base_physical: int | None,
+    estimated_wage: float | None,
+) -> int:
+    cur = conn.execute(
+        """INSERT OR REPLACE INTO scouting_candidates
+           (name, club_name, source, position, age, current_overall, potential,
+            base_pace, base_shooting, base_passing, base_dribbling, base_defending,
+            base_physical, estimated_wage)
+           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+        (
+            name, club_name, source, position, age, current_overall, potential,
+            base_pace, base_shooting, base_passing, base_dribbling, base_defending,
+            base_physical, estimated_wage,
+        ),
+    )
+    conn.commit()
+    return cur.lastrowid
+
+
+def all_scouting_candidates(conn: sqlite3.Connection) -> list[sqlite3.Row]:
+    return conn.execute("SELECT * FROM scouting_candidates").fetchall()
