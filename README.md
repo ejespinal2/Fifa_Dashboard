@@ -193,6 +193,14 @@ pip install -e .
 python -c "from fifa_analytics.db.models import init_db; init_db('data/fifa.db')"
 ```
 
+If you've had a database since before Phase 4, re-run that `init_db` line
+after pulling — `scouting_candidates` grew several columns in Phase 4, and
+since schema.sql uses `CREATE TABLE IF NOT EXISTS`, a table that already
+existed in the old shape stays that way forever without an explicit
+recreate. `init_db` now detects and migrates this automatically (dropping
+and recreating just that one table — it's a disposable, source-refreshed
+snapshot, never hand-edited data like your players/matches).
+
 ## Capturing a match
 
 1. Card overalls come from [EAFC26-DataHub](https://github.com/ismailoksuz/EAFC26-DataHub),

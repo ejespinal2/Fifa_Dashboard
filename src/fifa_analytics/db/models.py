@@ -13,9 +13,30 @@ def connect(db_path: str) -> sqlite3.Connection:
     return conn
 
 
+def _migrate_stale_scouting_candidates(conn: sqlite3.Connection) -> None:
+    """Phase 4 widened scouting_candidates (name/club_name/sub-attributes
+    added, fit_score dropped) after some databases already had the old,
+    narrower version of this table from an earlier CREATE TABLE IF NOT
+    EXISTS run -- which leaves it in the old shape forever, since IF NOT
+    EXISTS is a no-op once the table exists. Safe to just drop and let the
+    schema recreate it: this table is a fully disposable, source-refreshed
+    snapshot (cleared and rebuilt by every scouting_importer run), never
+    hand-edited or referenced by other tables, unlike players/matches/etc.
+    """
+    row = conn.execute(
+        "SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'scouting_candidates'"
+    ).fetchone()
+    if row is None:
+        return
+    columns = {r["name"] for r in conn.execute("PRAGMA table_info(scouting_candidates)")}
+    if "name" not in columns:
+        conn.execute("DROP TABLE scouting_candidates")
+
+
 def init_db(db_path: str) -> None:
     conn = connect(db_path)
     try:
+        _migrate_stale_scouting_candidates(conn)
         conn.executescript(SCHEMA_PATH.read_text())
         conn.commit()
     finally:
