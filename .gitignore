@@ -5,6 +5,7 @@ venv/
 
 # Local data — never commit real screenshots or the database
 data/fifa.db
+data/profiles/**
 data/screenshots/**
 data/crops/**
 !data/screenshots/.gitkeep

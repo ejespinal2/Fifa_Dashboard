@@ -29,11 +29,44 @@ def _run(db_path, monkeypatch):
     return at
 
 
-def test_empty_db_shows_setup_hint_not_crash(tmp_path, monkeypatch):
+def test_empty_db_runs_first_run_wizard_end_to_end(tmp_path, monkeypatch):
+    """An empty career shows the pick-your-club wizard; completing it
+    imports the club (network stubbed), stores the my-club setting, and
+    lands on the normal dashboard."""
     db = tmp_path / "empty.db"
     init_db(str(db))
+
+    from fifa_analytics.cards import eafc26_datahub_importer as datahub
+    from fifa_analytics.cards import scouting_importer
+
+    def fake_scrape_and_store(club, db_path, source, csv_source=None):
+        conn = connect(db_path)
+        team = get_or_create_team(conn, club)
+        for i, position in enumerate(["GK", "CB", "ST"]):
+            upsert_player(conn, f"{club} Player {i}", position, 75 + i, source, team_id=team)
+        conn.close()
+        return 3
+
+    monkeypatch.setattr(datahub, "list_clubs", lambda csv_source=None: ["Test FC", "Other FC"])
+    monkeypatch.setattr(datahub, "scrape_and_store", fake_scrape_and_store)
+    monkeypatch.setattr(scouting_importer, "import_scouting_candidates",
+                        lambda *args, **kwargs: 0)
+
     at = _run(db, monkeypatch)
-    assert any("Import card data" in str(block.value) for block in at.info)
+    assert at.selectbox(key="wiz_club")  # the wizard rendered
+
+    at.selectbox(key="wiz_club").select("Test FC").run()
+    start_button = next(b for b in at.button if b.label == "Start career")
+    start_button.click().run()
+    assert not at.exception, at.exception
+
+    conn = connect(str(db))
+    from fifa_analytics.db.models import get_setting
+    assert get_setting(conn, "my_team_name") == "Test FC"
+    assert conn.execute("SELECT COUNT(*) FROM players").fetchone()[0] == 3
+    conn.close()
+    # and the dashboard proper rendered with the imported club selected
+    assert any("Test FC" in sb.value for sb in at.sidebar.selectbox if sb.value)
 
 
 def test_populated_db_renders_all_tabs(tmp_path, monkeypatch):

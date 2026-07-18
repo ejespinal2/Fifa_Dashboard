@@ -21,7 +21,9 @@ testable without the UI.
 
 import argparse
 import os
+import re
 from datetime import date as date_type
+from pathlib import Path
 
 import altair as alt
 import pandas as pd
@@ -39,9 +41,11 @@ from fifa_analytics.db.models import (
     delete_match,
     get_or_create_season,
     get_or_create_team,
+    get_setting,
     init_db,
     reset_match_data,
     set_player_team,
+    set_setting,
     update_match_result,
 )
 from fifa_analytics.model.features import ATTRIBUTES
@@ -62,6 +66,104 @@ def get_db_path() -> str:
     parser.add_argument("--db", default="data/fifa.db")
     args, _ = parser.parse_known_args()
     return args.db
+
+
+def profiles_dir() -> Path:
+    return Path(os.environ.get("FIFA_PROFILES_DIR", "data/profiles"))
+
+
+def _slugify(name: str) -> str:
+    return re.sub(r"[^a-z0-9]+", "_", name.lower()).strip("_") or "career"
+
+
+def pick_career_db(default_db: str) -> str:
+    """Sidebar career picker. Every career is its own database file under
+    data/profiles/ (the --db file shows up as 'Default'), so several people
+    — or several save files — share one install without sharing any data.
+    A new career starts from a completely fresh file: every player at their
+    real-world club, no matches, no history."""
+    # A widget's session_state key can't be assigned after the widget is
+    # instantiated in the same run — so career creation stashes the new
+    # career under a pending key and applies it here, before the selectbox
+    # exists on the next run.
+    pending = st.session_state.pop("career_pending", None)
+    if pending is not None:
+        st.session_state["career_choice"] = pending
+
+    profiles = sorted(profiles_dir().glob("*.db"))
+    options: dict[str, str] = {}
+    if os.path.exists(default_db) or not profiles:
+        options[f"Default ({default_db})"] = default_db
+    for p in profiles:
+        options[p.stem.replace("_", " ").title()] = str(p)
+
+    st.sidebar.subheader("Career")
+    labels = list(options) + ["➕ New career…"]
+    if st.session_state.get("career_choice") not in labels:
+        st.session_state.pop("career_choice", None)  # e.g. profile file deleted
+    choice = st.sidebar.selectbox("Playing as", labels, key="career_choice")
+
+    if choice != "➕ New career…":
+        return options[choice]
+
+    name = st.sidebar.text_input("Career name (e.g. your gamertag or 'Man Utd 2nd save')", key="career_new_name")
+    if st.sidebar.button("Create career", disabled=not name.strip()):
+        profiles_dir().mkdir(parents=True, exist_ok=True)
+        path = profiles_dir() / f"{_slugify(name)}.db"
+        init_db(str(path))
+        st.session_state["career_pending"] = path.stem.replace("_", " ").title()
+        st.rerun()
+    st.sidebar.caption("A new career is a fresh database — pick your club on the next screen.")
+    st.stop()  # nothing to render until the career exists
+
+
+@st.cache_data(ttl=3600, show_spinner=False)
+def _club_list() -> list[str]:
+    from fifa_analytics.cards import eafc26_datahub_importer as datahub
+
+    return datahub.list_clubs()
+
+
+def first_run_wizard(db_path: str) -> None:
+    """Shown while the database has no teams: pick your club from the real
+    dataset, import its card data, optionally pull the scouting pool."""
+    st.header("Set up your career")
+    st.caption("Pick the club you're managing — its full roster imports from EAFC26-DataHub.")
+
+    try:
+        with st.spinner("Loading the club list..."):
+            clubs = _club_list()
+    except Exception as fetch_error:  # offline etc. — let them type it instead
+        st.warning(f"Couldn't fetch the club list ({fetch_error}) — type the club name exactly instead.")
+        clubs = []
+
+    club = (
+        st.selectbox("Your club", clubs, index=None, placeholder="Start typing to search...", key="wiz_club")
+        if clubs
+        else st.text_input("Your club (exact dataset spelling)", key="wiz_club_text").strip() or None
+    )
+    with_scouting = st.checkbox(
+        "Also import the scouting pool (every player at every other club — powers the Scouting tab)",
+        value=True, key="wiz_scouting",
+    )
+    if st.button("Start career", type="primary", disabled=not club):
+        from fifa_analytics.cards import eafc26_datahub_importer as datahub
+        from fifa_analytics.cards.scouting_importer import import_scouting_candidates
+
+        try:
+            with st.spinner(f"Importing {club}..."):
+                stored = datahub.scrape_and_store(club, db_path, "eafc26-datahub:main")
+        except ValueError as import_error:
+            st.error(str(import_error))
+            return
+        conn = connect(db_path)
+        set_setting(conn, "my_team_name", club)
+        conn.close()
+        if with_scouting:
+            with st.spinner("Importing the scouting pool (~18,000 players)..."):
+                import_scouting_candidates(db_path, "eafc26-datahub:main", exclude_club_names=[club])
+        st.session_state["schedule_flash"] = f"Career started — {stored} player(s) imported for {club}."
+        st.rerun()
 
 
 def get_conn(db_path: str):
@@ -336,11 +438,17 @@ def schedule_tab(conn, team_id: int, db_path: str) -> None:
     venue = col_venue.radio("Venue", ["Home", "Away"], horizontal=True, key="fx_venue")
     opponent_name = _team_picker(conn, f"Opponent (you are {my_team_name})", key="fx_opponent")
 
-    default_dir = f"data/screenshots/{match_date.isoformat()}"
+    base_dir = get_setting(conn, "screenshot_base_dir") or "data/screenshots"
+    folder_name = f"{match_date.isoformat()}_{_slugify(opponent_name)}" if opponent_name else match_date.isoformat()
+    default_dir = os.path.join(base_dir, folder_name)
     screenshot_dir = st.text_input(
         "Screenshot folder for this match (drop this day's images there, then hit Process below)",
-        value=default_dir, key="fx_dir",
+        value=default_dir,
+        # keying on the default makes the suggestion follow the date/opponent
+        # pickers; a hand-typed path sticks until either of those changes
+        key=f"fx_dir_{folder_name}",
     )
+    st.caption("Change the base folder under Manage → Settings — subfolder-per-match under one parent folder works great.")
     if st.button("Create fixture", type="primary", disabled=opponent_name is None or opponent_name == my_team_name):
         opponent_id = get_or_create_team(conn, opponent_name)
         season_id = get_or_create_season(conn, "2025-26")
@@ -412,6 +520,19 @@ def schedule_tab(conn, team_id: int, db_path: str) -> None:
 def manage_tab(conn, db_path: str) -> None:
     _flash("manage_flash")
 
+    st.subheader("Settings")
+    current_base = get_setting(conn, "screenshot_base_dir") or "data/screenshots"
+    new_base = st.text_input(
+        "Base screenshots folder (each match gets its own subfolder inside it — "
+        r"e.g. C:\Users\you\FIFA_Screenshots)",
+        value=current_base, key="set_base_dir",
+    )
+    if st.button("Save settings", disabled=new_base.strip() == current_base):
+        set_setting(conn, "screenshot_base_dir", new_base.strip())
+        st.session_state["manage_flash"] = "Settings saved."
+        st.rerun()
+
+    st.divider()
     st.subheader("Player search & transfer")
     st.caption(
         "Re-home a player whose move you know about but haven't captured yet "
@@ -483,20 +604,29 @@ def main():
     st.set_page_config(page_title="FIFA Career Mode Analytics", layout="wide")
     st.title("FIFA Career Mode Analytics")
 
-    db_path = get_db_path()
+    db_path = pick_career_db(get_db_path())
     init_db(db_path)  # idempotent; applies schema migrations on upgrade
     conn = get_conn(db_path)
     teams = queries.teams_with_players(conn)
     if not teams:
-        st.info(
-            "No teams in the database yet. Import card data first:\n\n"
-            "```\npython -m fifa_analytics.cards.eafc26_datahub_importer "
-            '"Manchester United" data/fifa.db "eafc26-datahub:main"\n```'
-        )
+        first_run_wizard(db_path)
         return
 
+    my_team_name = get_setting(conn, "my_team_name")
     labels = {f"{t['name']} ({t['player_count']} players)": t["team_id"] for t in teams}
-    team_id = labels[st.sidebar.selectbox("Team", list(labels))]
+    default_index = next(
+        (i for i, t in enumerate(teams) if t["name"] == my_team_name), 0
+    )
+    selectbox_label = "Viewing team" if my_team_name else "Team"
+    team_key = st.sidebar.selectbox(selectbox_label, list(labels), index=default_index)
+    team_id = labels[team_key]
+    if my_team_name:
+        st.sidebar.caption(f"Your club: **{my_team_name}**")
+    else:
+        selected_name = team_key.rsplit(" (", 1)[0]
+        if st.sidebar.button(f"Make {selected_name} my club"):
+            set_setting(conn, "my_team_name", selected_name)
+            st.rerun()
     st.sidebar.caption(
         "Analysis tabs read reviewed data only (whatever the model/xPTS "
         "recompute last saw). Schedule and Manage write, but only when you "

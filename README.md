@@ -14,6 +14,19 @@ academy engine)**, and **Phase 5 (the interactive dashboard)**.
 streamlit run src/fifa_analytics/dashboard/app.py -- --db data/fifa.db
 ```
 
+**Careers (multi-user / multi-save).** The sidebar's *Career* picker makes
+the whole system repeatable: every career is its own database file under
+`data/profiles/` (gitignored), so several people — or several save files —
+share one install without sharing any data. *New career…* creates a fresh
+file and runs the first-run wizard: pick your club from the real dataset's
+club list (type-to-search), its full roster imports automatically, and
+optionally the scouting pool too. A fresh career means every player is at
+their real-world club by definition — that's the clean "reset everything
+for a new person" path, and it never touches anyone else's career. The
+`--db` file appears in the picker as "Default" for pre-profiles databases.
+No deployment needed for multiple people: each person clones the repo and
+runs locally (private, free), or shares one machine via careers.
+
 Read-only Streamlit views over everything Phases 1-4 compute, one tab each
 (pick a team in the sidebar; every view follows it):
 
@@ -41,9 +54,15 @@ Read-only Streamlit views over everything Phases 1-4 compute, one tab each
   transfer control, for moves you know happened in your save but haven't
   captured yet (the OCR pipeline re-homes players automatically when it
   *sees* them; this gets ahead of it). Also: one-click card-data import for
-  a new opponent, and a danger zone that resets all match data (matches,
-  captures, stats, model history, xPTS, seasons) while keeping teams,
-  players, and the scouting pool — gated behind typing `RESET`.
+  a new opponent, a settings section (the base screenshots folder every
+  fixture's suggested subfolder lives under — point it anywhere, e.g.
+  `C:\Users\you\FIFA_Screenshots`), and a danger zone that resets all
+  match data (matches, captures, stats, model history, xPTS, seasons)
+  while keeping teams, players, and the scouting pool — gated behind
+  typing `RESET`. For a full from-scratch restart (players back at their
+  original clubs), start a new career instead — a re-import can't restore
+  rosters in place, since `upsert_player` keys on (name, source, team) and
+  a within-save transferee would just duplicate.
 
 Design decisions worth knowing:
 

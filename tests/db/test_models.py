@@ -155,3 +155,15 @@ def test_set_player_team(tmp_path):
     row = conn.execute("SELECT team_id FROM players WHERE player_id = ?", (player,)).fetchone()
     assert row["team_id"] == them
     conn.close()
+
+
+def test_settings_roundtrip(tmp_path):
+    from fifa_analytics.db.models import get_setting, set_setting
+    path = str(tmp_path / "t.db")
+    init_db(path)
+    conn = connect(path)
+    assert get_setting(conn, "my_team_name") is None
+    set_setting(conn, "my_team_name", "Us FC")
+    set_setting(conn, "my_team_name", "Them FC")  # overwrite, not duplicate
+    assert get_setting(conn, "my_team_name") == "Them FC"
+    conn.close()

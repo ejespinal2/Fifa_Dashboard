@@ -58,6 +58,16 @@ def init_db(db_path: str) -> None:
         conn.close()
 
 
+def get_setting(conn: sqlite3.Connection, key: str) -> str | None:
+    row = conn.execute("SELECT value FROM app_settings WHERE key = ?", (key,)).fetchone()
+    return row["value"] if row else None
+
+
+def set_setting(conn: sqlite3.Connection, key: str, value: str) -> None:
+    conn.execute("INSERT OR REPLACE INTO app_settings (key, value) VALUES (?, ?)", (key, value))
+    conn.commit()
+
+
 def get_or_create_team(conn: sqlite3.Connection, name: str, league: str | None = None) -> int:
     row = conn.execute("SELECT team_id FROM teams WHERE name = ?", (name,)).fetchone()
     if row:

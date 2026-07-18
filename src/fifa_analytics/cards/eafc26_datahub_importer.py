@@ -48,6 +48,16 @@ def load_rows(csv_source: str) -> list[dict]:
     return list(csv.DictReader(io.StringIO(text)))
 
 
+def list_clubs(csv_source: str = RAW_CSV_URL) -> list[str]:
+    """Every distinct club name in the dataset, sorted — powers the
+    dashboard's pick-your-club onboarding so users choose from real
+    spellings instead of guessing them."""
+    return sorted({
+        club for row in load_rows(csv_source)
+        if (club := (row.get("club_name") or "").strip())
+    })
+
+
 def players_for_club(rows: list[dict], club_name: str) -> list[dict]:
     matches = [r for r in rows if r.get("club_name", "").strip().lower() == club_name.strip().lower()]
     if not matches:

@@ -144,3 +144,10 @@ CREATE TABLE IF NOT EXISTS scouting_candidates (
     estimated_wage   REAL,
     UNIQUE(name, club_name, source)
 );
+
+-- Per-career app settings (my club, screenshot base folder, ...). One row
+-- per key; the dashboard is the only writer.
+CREATE TABLE IF NOT EXISTS app_settings (
+    key    TEXT PRIMARY KEY,
+    value  TEXT
+);

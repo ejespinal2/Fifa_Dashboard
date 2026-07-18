@@ -98,3 +98,9 @@ def test_stored_candidate_has_sub_attributes(csv_path, db_path):
     assert candidate["base_pace"] == 88
     assert candidate["current_overall"] == 72
     assert candidate["potential"] == 89
+
+
+def test_list_clubs_returns_sorted_distinct_names(csv_path):
+    from fifa_analytics.cards.eafc26_datahub_importer import list_clubs
+
+    assert list_clubs(csv_path) == ["Manchester United", "Other Club", "Some Club"]
