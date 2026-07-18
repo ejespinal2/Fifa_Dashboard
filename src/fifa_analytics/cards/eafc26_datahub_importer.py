@@ -57,6 +57,21 @@ def players_for_club(rows: list[dict], club_name: str) -> list[dict]:
     return matches
 
 
+def _real_position(row: dict) -> str:
+    """club_position is the squad-sheet slot, which for bench players is
+    literally "SUB"/"RES" — useless for positional-fit analysis (a benched
+    CDM would read as position-less). Prefer it only when it's a real
+    position; otherwise fall back to the first entry of player_positions
+    (e.g. "CDM, CM" -> "CDM"), the player's actual preferred position.
+    """
+    club_position = (row.get("club_position") or "").strip().upper()
+    if club_position and club_position not in ("SUB", "RES"):
+        return club_position
+    player_positions = (row.get("player_positions") or "").split(",")
+    preferred = player_positions[0].strip().upper() if player_positions else ""
+    return preferred or "UNK"
+
+
 def upsert_player_from_row(conn, row: dict, team_id: int, source_label: str) -> int:
     """Shared by scrape_and_store and the transferred-player fallback in
     pipeline.py, so both write a card row the same way."""
@@ -64,7 +79,7 @@ def upsert_player_from_row(conn, row: dict, team_id: int, source_label: str) -> 
         conn,
         name=row["short_name"],
         team_id=team_id,
-        position=row.get("club_position") or "UNK",
+        position=_real_position(row),
         base_overall=_to_int(row["overall"]),
         base_pace=_to_int(row.get("pace")),
         base_shooting=_to_int(row.get("shooting")),

@@ -4,7 +4,36 @@ A free, locally-run system that turns EA FC Career Mode post-match screenshots i
 a "true overall" model for your squad — sub-attributes that evolve match by match
 based on actual performance vs. card ratings — plus team analysis and squad
 recommendations. See the full spec for the long-term vision; this repo currently
-implements **Phase 1 (data foundation)** and **Phase 2 (true-overall model, v1)**.
+implements **Phase 1 (data foundation)**, **Phase 2 (true-overall model, v1)**,
+and **Phase 3 (team analysis: best XI + xPTS)**.
+
+## Phase 3: team analysis
+
+**Best starting XI** — optimal assignment of your squad to a formation's 11
+slots, maximizing total (rating × positional fit), solved exactly with the
+Hungarian algorithm rather than greedily:
+
+```bash
+python -m fifa_analytics.analysis.best_xi data/fifa.db "Manchester United"            # best across all formations
+python -m fifa_analytics.analysis.best_xi data/fifa.db "Manchester United" 4-2-3-1    # a specific one
+```
+
+Ratings prefer the model's latest true overall, falling back to card
+overalls for players without match history. Positional-fit multipliers and
+the formation list live in `analysis/formations.py` — add a formation by
+adding one line. Out-of-position picks are marked in the output.
+
+**xPTS tracking** — each match's captured xG pair becomes win/draw/loss
+probabilities via independent Poisson goal models, then expected points,
+stored per (match, team) in `team_match_expected`:
+
+```bash
+python -m fifa_analytics.analysis.xpts data/fifa.db
+```
+
+prints the season table: points vs xPTS (over/under-performance) and total
+xG for/against. Same trust boundary as the model: reviewed captures only by
+default, `--include-unreviewed` to preview.
 
 ## Phase 2: the true-overall model
 

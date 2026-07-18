@@ -19,6 +19,8 @@ from fifa_analytics.db.models import (
     create_match,
     get_team_id_by_name,
 )
+from fifa_analytics.analysis.best_xi import best_formation, load_squad, print_xi
+from fifa_analytics.analysis.xpts import compute_all as compute_xpts, season_table
 from fifa_analytics.cards.eafc26_datahub_importer import scrape_and_store
 from fifa_analytics.model.true_overall import recompute_all
 from fifa_analytics.ocr.pipeline import run_match_dir
@@ -98,6 +100,21 @@ def main(match_dir: str):
     ):
         print(dict(row))
     conn.close()
+
+    print("\n--- xPTS (PREVIEW on unreviewed OCR data) ---")
+    xpts_rows = compute_xpts(DB_PATH, include_unreviewed=True)
+    print(f"({xpts_rows} team-match row(s) written)")
+    for row in season_table(DB_PATH):
+        over_under = (row["points"] or 0) - (row["xpts"] or 0)
+        print(f"  {row['team']:<28} P{row['matches']}  pts {row['points']}  xPTS {row['xpts']}  "
+              f"({'+' if over_under >= 0 else ''}{over_under:.2f} vs expected)")
+
+    print(f"\n--- Best XI for {HOME_TEAM} (latest true overalls, card fallback) ---")
+    conn = connect(DB_PATH)
+    squad = load_squad(conn, home_id)
+    conn.close()
+    formation_name, assignments, total = best_formation(squad)
+    print_xi(formation_name, assignments, total)
 
     print(f"\nDone. Run: streamlit run src/fifa_analytics/validate_app.py -- --db {DB_PATH}")
 
