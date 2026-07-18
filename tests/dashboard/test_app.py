@@ -184,3 +184,56 @@ def test_create_fixture_flow(tmp_path, monkeypatch):
     assert row is not None
     assert (row["home"], row["away"]) == ("Us FC", "Them FC")  # venue defaults to Home
     assert row["date"] is not None and row["competition"] is not None
+
+
+def test_assistant_tab_answers_with_stubbed_llm(tmp_path, monkeypatch):
+    """Chat flow end-to-end with Ollama stubbed: the question builds a
+    grounded context pack and the (fake) model's answer renders."""
+    db = tmp_path / "assistant.db"
+    init_db(str(db))
+    conn = connect(str(db))
+    us = get_or_create_team(conn, "Us FC")
+    for i, position in enumerate(["GK", "CB", "CB", "LB", "RB", "CDM", "CM", "CM", "LW", "RW", "ST"]):
+        upsert_player(conn, f"Player {i}", position, 70 + i, "test", team_id=us)
+    conn.commit()
+    conn.close()
+
+    from fifa_analytics.assistant import llm
+
+    monkeypatch.setattr(llm, "is_available", lambda timeout=2.0: True)
+    monkeypatch.setattr(llm, "list_models", lambda: ["fake-model"])
+    seen = {}
+
+    def fake_chat(messages, model=None, timeout=None):
+        seen["system"] = messages[0]["content"]
+        return "Start Player 10 up front — highest effective rating."
+
+    monkeypatch.setattr(llm, "chat", fake_chat)
+
+    at = _run(db, monkeypatch)
+    at.chat_input[0].set_value("Pick my strongest XI on true overalls").run()
+    assert not at.exception, at.exception
+
+    rendered = " ".join(str(md.value) for md in at.markdown)
+    assert "Start Player 10 up front" in rendered
+    assert "CONTEXT DATA" in seen["system"]      # grounding pack reached the model
+    assert "best_xi" in seen["system"]           # squad section was routed in
+
+
+def test_assistant_tab_degrades_without_ollama(tmp_path, monkeypatch):
+    db = tmp_path / "no_ollama.db"
+    init_db(str(db))
+    conn = connect(str(db))
+    us = get_or_create_team(conn, "Us FC")
+    for i, position in enumerate(["GK", "CB", "CB", "LB", "RB", "CDM", "CM", "CM", "LW", "RW", "ST"]):
+        upsert_player(conn, f"Player {i}", position, 70 + i, "test", team_id=us)
+    conn.commit()
+    conn.close()
+
+    from fifa_analytics.assistant import llm
+
+    monkeypatch.setattr(llm, "is_available", lambda timeout=2.0: False)
+    at = _run(db, monkeypatch)
+    assert any("ollama.com" in str(block.value) for block in at.info)  # setup help shown
+    at.chat_input[0].set_value("who should I sell?").run()
+    assert not at.exception, at.exception  # data pack still renders, no crash

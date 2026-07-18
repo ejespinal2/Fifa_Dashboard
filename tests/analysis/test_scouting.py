@@ -107,3 +107,30 @@ def test_academy_prospects_requires_growth_room_and_floor(db_path):
 
     names = {p["name"] for p in prospects}
     assert names == {"Prospect A"}
+
+
+def test_surplus_players_split_sell_vs_develop(db_path):
+    from fifa_analytics.analysis.scouting import surplus_players
+    conn = connect(db_path)
+    team_id = get_or_create_team(conn, "Test FC")
+    _weak_squad(conn, team_id)
+    # Old bench CM far below the starters -- sale candidate
+    upsert_player(conn, "Old Bench CM", "CM", 70, "test", team_id=team_id, age=30,
+                  base_pace=70, base_shooting=70, base_passing=70,
+                  base_dribbling=70, base_defending=70, base_physical=70)
+    # Young bench CM with the same gap -- loan/develop, not sell
+    upsert_player(conn, "Young Bench CM", "CM", 70, "test", team_id=team_id, age=19,
+                  base_pace=70, base_shooting=70, base_passing=70,
+                  base_dribbling=70, base_defending=70, base_physical=70)
+    # Bench winger just under the starter -- healthy depth, not surplus
+    upsert_player(conn, "Solid Backup W", "LW", 81, "test", team_id=team_id, age=27,
+                  base_pace=81, base_shooting=81, base_passing=81,
+                  base_dribbling=81, base_defending=81, base_physical=81)
+
+    surplus = surplus_players(conn, team_id, "4-3-3")
+    conn.close()
+
+    verdicts = {p["player"]: p["verdict"] for p in surplus}
+    assert verdicts["Old Bench CM"] == "sale_candidate"
+    assert verdicts["Young Bench CM"] == "loan_or_develop"
+    assert "Solid Backup W" not in verdicts

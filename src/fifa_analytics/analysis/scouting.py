@@ -106,6 +106,55 @@ def transfer_targets(conn, team_id: int, formation: str, tactic: str = "balanced
     return results
 
 
+SURPLUS_MIN_GAP = 5.0     # this far below your starter in their own group
+SURPLUS_MIN_AGE = 24      # younger than this = "develop or loan", not "sell"
+
+
+def surplus_players(conn, team_id: int, formation: str) -> list[dict]:
+    """Transfers OUT: squad players not in the best XI, measured against
+    the starter of their own position group. Older players far below the
+    starter are sale candidates; young ones with the same gap are loan/
+    develop candidates instead (their potential is the asset). Players
+    within SURPLUS_MIN_GAP of a starter are healthy depth, not surplus."""
+    squad = load_squad(conn, team_id)
+    assignments, _ = pick_best_xi(squad, formation)
+    starters = {a.player.player_id for a in assignments}
+    starter_rating_by_group: dict[str, float] = {}
+    for a in assignments:
+        current = starter_rating_by_group.get(a.slot_group)
+        if current is None or a.effective_rating < current:
+            starter_rating_by_group[a.slot_group] = a.effective_rating  # weakest starter = the bar to beat
+
+    ages = {
+        row["player_id"]: row["age"]
+        for row in conn.execute("SELECT player_id, age FROM players WHERE team_id = ?", (team_id,))
+    }
+    out = []
+    for player in squad:
+        if player.player_id in starters:
+            continue
+        bar = starter_rating_by_group.get(player.group)
+        if bar is None:  # no starter slot for their group in this formation
+            bar = min(starter_rating_by_group.values())
+        gap = round(bar - player.rating, 1)
+        if gap < SURPLUS_MIN_GAP:
+            continue
+        age = ages.get(player.player_id)
+        verdict = "loan_or_develop" if age is not None and age < SURPLUS_MIN_AGE else "sale_candidate"
+        out.append(
+            {
+                "player": player.name,
+                "group": player.group,
+                "rating": player.rating,
+                "rating_source": "true_overall" if player.rating_source == "true" else "card_only",
+                "age": age,
+                "gap_to_starter": gap,
+                "verdict": verdict,
+            }
+        )
+    return sorted(out, key=lambda p: -p["gap_to_starter"])
+
+
 def academy_prospects(conn, min_potential_gap: int = 8, max_age: int = 21, top_n: int = 10) -> list[dict]:
     candidates = all_scouting_candidates(conn)
     scored = []

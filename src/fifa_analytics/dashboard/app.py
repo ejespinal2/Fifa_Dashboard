@@ -600,6 +600,64 @@ def manage_tab(conn, db_path: str) -> None:
         st.rerun()
 
 
+def assistant_tab(conn, team_id: int) -> None:
+    from fifa_analytics.assistant import llm
+    from fifa_analytics.assistant.context import build_messages
+
+    st.caption(
+        "Grounded in this career's data: every answer is computed from your "
+        "true overalls, best-XI solver, matchup and transfer engines — the "
+        "model reasons over real numbers, it can't invent them."
+    )
+    ollama_up = llm.is_available()
+    if ollama_up:
+        models = llm.list_models() or [llm.DEFAULT_MODEL]
+        model = st.selectbox("Ollama model", models, key="asst_model")
+    else:
+        st.info(llm.SETUP_HELP)
+        st.caption(
+            "Until then, asking a question below still computes and shows "
+            "the relevant data pack — just without the written answer."
+        )
+        model = None
+
+    history = st.session_state.setdefault("asst_history", [])
+    for turn in history:
+        with st.chat_message(turn["role"]):
+            st.markdown(turn["content"])
+
+    question = st.chat_input(
+        "e.g. 'Pick my strongest XI on true overalls', 'How should I set up "
+        "against Arsenal?', 'Who should I sell?', 'What does xPTS mean?'"
+    )
+    if not question:
+        return
+
+    with st.chat_message("user"):
+        st.markdown(question)
+    messages, pack = build_messages(question, conn, team_id, history)
+
+    with st.chat_message("assistant"):
+        with st.expander("Data used for this answer"):
+            st.json({k: v for k, v in pack.items() if k != "explainers"})
+        if ollama_up:
+            try:
+                with st.spinner(f"Asking {model}..."):
+                    answer = llm.chat(messages, model=model)
+            except ConnectionError as gone:
+                answer = str(gone)
+            st.markdown(answer)
+        else:
+            answer = (
+                "(Ollama isn't running — the data pack above is what I'd "
+                "answer from. Install Ollama to get written advice.)"
+            )
+            st.markdown(answer)
+
+    history.append({"role": "user", "content": question})
+    history.append({"role": "assistant", "content": answer})
+
+
 def main():
     st.set_page_config(page_title="FIFA Career Mode Analytics", layout="wide")
     st.title("FIFA Career Mode Analytics")
@@ -633,8 +691,8 @@ def main():
         "click their buttons."
     )
 
-    tab_squad, tab_progress, tab_season, tab_xi, tab_scout, tab_schedule, tab_manage = st.tabs(
-        ["Squad", "Progression", "Season (xPTS)", "Best XI", "Scouting", "Schedule", "Manage"]
+    tab_squad, tab_progress, tab_season, tab_xi, tab_scout, tab_schedule, tab_manage, tab_assistant = st.tabs(
+        ["Squad", "Progression", "Season (xPTS)", "Best XI", "Scouting", "Schedule", "Manage", "Assistant"]
     )
     with tab_squad:
         squad_tab(conn, team_id)
@@ -650,6 +708,8 @@ def main():
         schedule_tab(conn, team_id, db_path)
     with tab_manage:
         manage_tab(conn, db_path)
+    with tab_assistant:
+        assistant_tab(conn, team_id)
 
 
 if __name__ == "__main__":

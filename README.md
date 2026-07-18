@@ -6,7 +6,45 @@ based on actual performance vs. card ratings — plus team analysis and squad
 recommendations. See the full spec for the long-term vision; this repo currently
 implements **Phase 1 (data foundation)**, **Phase 2 (true-overall model, v1)**,
 **Phase 3 (team analysis: best XI + xPTS)**, **Phase 4 (scouting/transfer/
-academy engine)**, and **Phase 5 (the interactive dashboard)**.
+academy engine)**, **Phase 5 (the interactive dashboard)**, and **Phase 6
+(the local AI assistant)** — the full spec roadmap.
+
+## Phase 6: the AI assistant
+
+The dashboard's **Assistant** tab is a chat over your career's data, powered
+by [Ollama](https://ollama.com) — a free, fully local LLM runtime. Nothing
+leaves your machine: no account, no API key, no cloud. One-time setup:
+
+1. Install Ollama from https://ollama.com/download
+2. `ollama pull llama3.2` (~2GB; `llama3.2:1b` is lighter, bigger models
+   like `qwen2.5:14b` give better advice if your machine can run them)
+
+What it's for, matching how it's grounded:
+
+- **Squad picking on true overalls** — "pick my strongest XI", "should X
+  start over Y?" The context pack includes your squad's true-vs-card
+  overalls, confidence, and the best-XI solver's output.
+- **Opponent-aware setup** — name any imported team ("how should I set up
+  against Leverkusen?") and the pack adds the matchup engine's comparison:
+  both best XIs, unit-level deltas (GK/defense/midfield/attack), their top
+  threats, your weakest slots.
+- **Transfers in and out** — "who should I sign/sell/loan?" pulls the
+  Phase 4 transfer targets and academy prospects plus the surplus engine
+  (bench players 5+ points below their group's starter: older = sale
+  candidate, younger = loan/develop).
+- **Understanding the models** — "what does xPTS mean?", "how is true
+  overall calculated?" answered from a hand-written knowledge base
+  (`assistant/knowledge.py`) that documents what the code actually does.
+
+**Grounding design** (`assistant/context.py`): the LLM never generates SQL
+and never free-recalls player data. Each question is keyword-routed to the
+relevant deterministic engines, their output is serialized into the system
+prompt as a context pack, and the model reasons over those numbers only —
+the exact pack is shown under "Data used for this answer" in the chat.
+Keyword routing (rather than LLM tool-calling) is deliberate: it behaves
+identically across every Ollama model, including small ones. Without
+Ollama running, the tab still computes and shows the data pack — you lose
+the prose, not the numbers.
 
 ## Phase 5: the dashboard
 
