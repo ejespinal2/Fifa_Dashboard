@@ -145,7 +145,8 @@ def main(match_dir: str):
               f"{p['current_overall']}->{p['potential']}  (+{p['growth_room']})  {p['club']}")
     conn.close()
 
-    print(f"\nDone. Run: streamlit run src/fifa_analytics/validate_app.py -- --db {DB_PATH}")
+    print(f"\nDone. Review OCR:  streamlit run src/fifa_analytics/validate_app.py -- --db {DB_PATH}")
+    print(f"Dashboard:         streamlit run src/fifa_analytics/dashboard/app.py -- --db {DB_PATH}")
 
 
 if __name__ == "__main__":

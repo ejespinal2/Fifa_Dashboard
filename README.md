@@ -5,8 +5,49 @@ a "true overall" model for your squad — sub-attributes that evolve match by ma
 based on actual performance vs. card ratings — plus team analysis and squad
 recommendations. See the full spec for the long-term vision; this repo currently
 implements **Phase 1 (data foundation)**, **Phase 2 (true-overall model, v1)**,
-**Phase 3 (team analysis: best XI + xPTS)**, and **Phase 4 (scouting/transfer/
-academy engine)**.
+**Phase 3 (team analysis: best XI + xPTS)**, **Phase 4 (scouting/transfer/
+academy engine)**, and **Phase 5 (the interactive dashboard)**.
+
+## Phase 5: the dashboard
+
+```bash
+streamlit run src/fifa_analytics/dashboard/app.py -- --db data/fifa.db
+```
+
+Read-only Streamlit views over everything Phases 1-4 compute, one tab each
+(pick a team in the sidebar; every view follows it):
+
+- **Squad** — card overall vs latest modeled true overall per player, with
+  the delta, model confidence, and how many matches of evidence it rests on.
+- **Progression** — true-overall lines for up to 6 players at once, plus a
+  per-player six-attribute detail chart. Gaps in an attribute line are
+  evidence gating (no shots that match = no shooting score), not lost data.
+- **Season (xPTS)** — the season table with an over/underperformance chart
+  (points − xPTS), and a match-by-match breakdown for the selected team.
+- **Best XI** — the Phase 3 solver behind a formation picker, including
+  "best of all" across every known formation.
+- **Scouting** — Phase 4 behind formation/tactic pickers: weakest slots,
+  upgrade-only transfer targets per position group, and academy prospects
+  with age/growth-room sliders.
+
+Design decisions worth knowing:
+
+- **The dashboard never writes.** OCR corrections stay in `validate_app.py`,
+  model recomputes in the model/analysis CLIs — so a browser tab left open
+  can't corrupt anything. It also only *reads* what those CLIs last wrote,
+  which means it inherits their reviewed-data-only trust boundary.
+- Data access lives in `dashboard/queries.py` (plain functions, no
+  streamlit) so every view's logic is unit-testable; `dashboard/app.py` is
+  UI only, smoke-tested end-to-end with streamlit's `AppTest` against both
+  an empty and a populated database.
+- Database connections are opened per rerun, *not* cached with
+  `st.cache_resource` — sqlite connections are bound to their creating
+  thread and Streamlit reruns land on arbitrary threads, so a cached
+  connection eventually crashes every view (found live; `validate_app.py`
+  had the same latent bug and got the same fix).
+- Two spec §8 items are deliberately absent: the heatmap viewer (Phase 1's
+  capture scope has no heatmap screenshots, so there's nothing to show) and
+  the chat box (that's Phase 6's local-LLM assistant).
 
 ## Phase 4: scouting, transfer targets, and academy prospects
 

@@ -21,8 +21,11 @@ def get_db_path() -> str:
     return args.db
 
 
-@st.cache_resource
 def get_conn(db_path: str) -> sqlite3.Connection:
+    # Not st.cache_resource: sqlite connections are bound to their creating
+    # thread and Streamlit reruns land on arbitrary threads — a cached
+    # connection eventually raises "SQLite objects created in a thread can
+    # only be used in that same thread". Per-rerun connections are cheap.
     return connect(db_path)
 
 
