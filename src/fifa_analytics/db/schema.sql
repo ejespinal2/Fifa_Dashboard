@@ -46,7 +46,8 @@ CREATE TABLE IF NOT EXISTS matches (
     away_team_id   INTEGER NOT NULL REFERENCES teams(team_id),
     home_score     INTEGER,
     away_score     INTEGER,
-    date           TEXT,
+    date           TEXT,                     -- ISO yyyy-mm-dd; the calendar/schedule view keys off this
+    competition    TEXT,                     -- 'Premier League', 'FA Cup', ... for per-competition W/D/L records
     screenshot_dir TEXT NOT NULL             -- data/screenshots/... path, for traceability back to source images
 );
 

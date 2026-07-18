@@ -33,10 +33,25 @@ def _migrate_stale_scouting_candidates(conn: sqlite3.Connection) -> None:
         conn.execute("DROP TABLE scouting_candidates")
 
 
+def _migrate_matches_competition(conn: sqlite3.Connection) -> None:
+    """Matches grew a nullable `competition` column for the schedule view.
+    Unlike scouting_candidates, matches is real user data — so this is an
+    additive ALTER, never a drop."""
+    row = conn.execute(
+        "SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'matches'"
+    ).fetchone()
+    if row is None:
+        return
+    columns = {r["name"] for r in conn.execute("PRAGMA table_info(matches)")}
+    if "competition" not in columns:
+        conn.execute("ALTER TABLE matches ADD COLUMN competition TEXT")
+
+
 def init_db(db_path: str) -> None:
     conn = connect(db_path)
     try:
         _migrate_stale_scouting_candidates(conn)
+        _migrate_matches_competition(conn)
         conn.executescript(SCHEMA_PATH.read_text())
         conn.commit()
     finally:
@@ -134,15 +149,68 @@ def create_match(
     home_score: int | None = None,
     away_score: int | None = None,
     date: str | None = None,
+    competition: str | None = None,
 ) -> int:
     cur = conn.execute(
         """INSERT INTO matches (season_id, matchweek, home_team_id, away_team_id,
-           home_score, away_score, date, screenshot_dir)
-           VALUES (?, ?, ?, ?, ?, ?, ?, ?)""",
-        (season_id, matchweek, home_team_id, away_team_id, home_score, away_score, date, screenshot_dir),
+           home_score, away_score, date, competition, screenshot_dir)
+           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+        (season_id, matchweek, home_team_id, away_team_id, home_score, away_score, date, competition, screenshot_dir),
     )
     conn.commit()
     return cur.lastrowid
+
+
+def update_match_result(conn: sqlite3.Connection, match_id: int, home_score: int | None, away_score: int | None) -> None:
+    conn.execute(
+        "UPDATE matches SET home_score = ?, away_score = ? WHERE match_id = ?",
+        (home_score, away_score, match_id),
+    )
+    conn.commit()
+
+
+def delete_match(conn: sqlite3.Connection, match_id: int) -> None:
+    """Removes a fixture and everything hanging off it (captures, stats,
+    events, model rows) — for fat-fingered schedule entries."""
+    conn.execute("DELETE FROM match_events WHERE match_id = ?", (match_id,))
+    conn.execute(
+        "DELETE FROM match_stat_values WHERE capture_id IN (SELECT capture_id FROM ocr_captures WHERE match_id = ?)",
+        (match_id,),
+    )
+    conn.execute("DELETE FROM true_overall_history WHERE match_id = ?", (match_id,))
+    conn.execute("DELETE FROM team_match_expected WHERE match_id = ?", (match_id,))
+    conn.execute("DELETE FROM ocr_captures WHERE match_id = ?", (match_id,))
+    conn.execute("DELETE FROM matches WHERE match_id = ?", (match_id,))
+    conn.commit()
+
+
+def set_player_team(conn: sqlite3.Connection, player_id: int, team_id: int) -> None:
+    """Manual transfer: re-home a player to another team — for moves you
+    know happened in your save but haven't captured in screenshots yet."""
+    conn.execute("UPDATE players SET team_id = ? WHERE player_id = ?", (team_id, player_id))
+    conn.commit()
+
+
+def reset_match_data(conn: sqlite3.Connection) -> dict[str, int]:
+    """Wipes everything derived from played matches — captures, stats,
+    events, model history, xPTS, the matches and seasons themselves — while
+    KEEPING teams, players (card data), and the scouting pool. Returns
+    {table: rows_deleted} so the caller can show what happened.
+    """
+    tables = (  # children before parents, FK-safe
+        "match_events",
+        "match_stat_values",
+        "true_overall_history",
+        "team_match_expected",
+        "ocr_captures",
+        "matches",
+        "seasons",
+    )
+    deleted = {}
+    for table in tables:
+        deleted[table] = conn.execute(f"DELETE FROM {table}").rowcount
+    conn.commit()
+    return deleted
 
 
 def create_capture(

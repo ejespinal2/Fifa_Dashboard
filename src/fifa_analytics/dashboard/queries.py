@@ -148,3 +148,71 @@ def team_match_xpts(conn: sqlite3.Connection, team_id: int) -> list[dict]:
 
 def scouting_pool_size(conn: sqlite3.Connection) -> int:
     return conn.execute("SELECT COUNT(*) FROM scouting_candidates").fetchone()[0]
+
+
+def all_teams(conn: sqlite3.Connection) -> list[dict]:
+    rows = conn.execute("SELECT team_id, name FROM teams ORDER BY name").fetchall()
+    return [dict(row) for row in rows]
+
+
+def schedule(conn: sqlite3.Connection) -> list[dict]:
+    """Every fixture, dated ones first (newest at top), undated at the
+    bottom — with how many screenshot captures have landed against each, so
+    the schedule shows which matches still need their images processed."""
+    rows = conn.execute(
+        """SELECT m.match_id, m.date, m.competition, m.matchweek,
+                  th.name AS home_team, ta.name AS away_team,
+                  m.home_score, m.away_score, m.screenshot_dir,
+                  (SELECT COUNT(*) FROM ocr_captures oc WHERE oc.match_id = m.match_id) AS captures
+           FROM matches m
+           JOIN teams th ON th.team_id = m.home_team_id
+           JOIN teams ta ON ta.team_id = m.away_team_id
+           ORDER BY m.date IS NULL, m.date DESC, m.match_id DESC"""
+    ).fetchall()
+    return [dict(row) for row in rows]
+
+
+def team_record(conn: sqlite3.Connection, team_id: int) -> list[dict]:
+    """W/D/L + goals for/against for one team, one row per competition plus
+    an 'All competitions' total row first. Only matches with both scores
+    recorded count."""
+    rows = conn.execute(
+        """SELECT COALESCE(m.competition, '(no competition)') AS competition,
+                  CASE WHEN m.home_team_id = ? THEN m.home_score ELSE m.away_score END AS gf,
+                  CASE WHEN m.home_team_id = ? THEN m.away_score ELSE m.home_score END AS ga
+           FROM matches m
+           WHERE (m.home_team_id = ? OR m.away_team_id = ?)
+             AND m.home_score IS NOT NULL AND m.away_score IS NOT NULL""",
+        (team_id, team_id, team_id, team_id),
+    ).fetchall()
+    if not rows:
+        return []
+
+    def tally(subset):
+        wins = sum(1 for r in subset if r["gf"] > r["ga"])
+        draws = sum(1 for r in subset if r["gf"] == r["ga"])
+        losses = sum(1 for r in subset if r["gf"] < r["ga"])
+        return {
+            "played": len(subset), "W": wins, "D": draws, "L": losses,
+            "GF": sum(r["gf"] for r in subset), "GA": sum(r["ga"] for r in subset),
+            "points": 3 * wins + draws,
+        }
+
+    competitions = sorted({r["competition"] for r in rows})
+    out = [{"competition": "All competitions", **tally(rows)}]
+    for comp in competitions:
+        out.append({"competition": comp, **tally([r for r in rows if r["competition"] == comp])})
+    return out
+
+
+def search_players(conn: sqlite3.Connection, text: str, limit: int = 25) -> list[dict]:
+    """Case-insensitive substring search across ALL players in the
+    database (every imported roster + regens), current team named."""
+    rows = conn.execute(
+        """SELECT p.player_id, p.name, p.position, p.base_overall, p.age,
+                  t.name AS team
+           FROM players p LEFT JOIN teams t ON t.team_id = p.team_id
+           WHERE p.name LIKE ? ORDER BY p.base_overall DESC NULLS LAST LIMIT ?""",
+        (f"%{text}%", limit),
+    ).fetchall()
+    return [dict(row) for row in rows]

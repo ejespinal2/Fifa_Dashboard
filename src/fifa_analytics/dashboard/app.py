@@ -1,7 +1,7 @@
-"""Phase 5: the Streamlit dashboard (spec §8) — read-only views over
-everything Phases 1-4 compute: squad true overalls, per-player progression,
-xPTS vs actual points, the best-XI generator, and scouting/transfer
-recommendations.
+"""Phase 5: the Streamlit dashboard (spec §8) — views over everything
+Phases 1-4 compute (squad true overalls, progression, xPTS, best XI,
+scouting), plus the management tabs: a match schedule/calendar with W/D/L
+and per-competition records, manual player transfers, and a stats reset.
 
 Run with:
     streamlit run src/fifa_analytics/dashboard/app.py -- --db data/fifa.db
@@ -10,13 +10,18 @@ Two spec §8 items are deliberately absent: the heatmap viewer (Phase 1's
 capture scope doesn't include heatmap screenshots, so there's no data for
 it) and the chat box (that's Phase 6's local-LLM assistant).
 
-This app never writes to the database — OCR corrections happen in
-validate_app.py, model recomputes via the model/analysis CLIs. Data logic
-lives in queries.py so it stays testable without the UI.
+Write boundary: the analysis tabs (Squad/Progression/Season/Best XI/
+Scouting) never write. The Schedule and Manage tabs write only on explicit
+button clicks — creating/scoring/deleting fixtures, re-homing a player,
+importing card data, resetting match stats. Per-stat OCR corrections still
+live in validate_app.py, which stays the trust gate for model inputs. Data
+logic lives in queries.py (reads) and db/models.py (writes) so it stays
+testable without the UI.
 """
 
 import argparse
 import os
+from datetime import date as date_type
 
 import altair as alt
 import pandas as pd
@@ -26,9 +31,21 @@ from fifa_analytics.analysis.best_xi import best_formation, load_squad, pick_bes
 from fifa_analytics.analysis.formations import FORMATIONS
 from fifa_analytics.analysis.scouting import academy_prospects, identify_weak_slots, transfer_targets
 from fifa_analytics.analysis.tactics import TACTIC_ADJUSTMENTS
+from fifa_analytics.analysis.xpts import compute_all as compute_xpts
 from fifa_analytics.dashboard import queries
-from fifa_analytics.db.models import connect
+from fifa_analytics.db.models import (
+    connect,
+    create_match,
+    delete_match,
+    get_or_create_season,
+    get_or_create_team,
+    init_db,
+    reset_match_data,
+    set_player_team,
+    update_match_result,
+)
 from fifa_analytics.model.features import ATTRIBUTES
+from fifa_analytics.model.true_overall import recompute_all
 
 # Categorical palette (6 slots, fixed order, CVD-validated). The six
 # attributes take the six slots in ATTRIBUTES order so pace is always blue,
@@ -263,11 +280,212 @@ def scouting_tab(conn, team_id: int) -> None:
         st.caption("Nobody in the pool clears these filters.")
 
 
+def _flash(key: str) -> None:
+    """Show-and-clear a success message stored before an st.rerun(), so
+    writes can refresh every table above the button that triggered them
+    without losing their confirmation."""
+    message = st.session_state.pop(key, None)
+    if message:
+        st.success(message)
+
+
+def _team_picker(conn, label: str, key: str) -> str | None:
+    """Selectbox over existing teams with a 'New team…' escape hatch.
+    Returns the chosen team NAME (None until one is picked/typed) — the
+    caller creates it via get_or_create_team on its button click, so a
+    half-typed name never writes a junk team row."""
+    teams = queries.all_teams(conn)
+    options = [t["name"] for t in teams] + ["➕ New team…"]
+    choice = st.selectbox(label, options, key=key)
+    if choice != "➕ New team…":
+        return choice
+    new_name = st.text_input("New team name", key=f"{key}_new").strip()
+    return new_name or None
+
+
+def schedule_tab(conn, team_id: int, db_path: str) -> None:
+    _flash("schedule_flash")
+
+    record = queries.team_record(conn, team_id)
+    if record:
+        st.subheader("Record")
+        st.dataframe(pd.DataFrame(record), use_container_width=True, hide_index=True)
+    else:
+        st.caption("No completed matches yet — the W/D/L record appears once fixtures have scores.")
+
+    st.subheader("Fixtures")
+    fixtures = queries.schedule(conn)
+    if fixtures:
+        df = pd.DataFrame(fixtures)[
+            ["date", "competition", "home_team", "home_score", "away_score", "away_team", "captures", "screenshot_dir"]
+        ]
+        st.dataframe(df, use_container_width=True, hide_index=True)
+    else:
+        st.caption("No fixtures yet — add the first one below.")
+
+    st.divider()
+    st.subheader("Add a fixture")
+    my_team_name = conn.execute("SELECT name FROM teams WHERE team_id = ?", (team_id,)).fetchone()["name"]
+    col_date, col_comp, col_venue = st.columns(3)
+    match_date = col_date.date_input("Date", value=date_type.today(), key="fx_date")
+    existing_comps = sorted(
+        {f["competition"] for f in fixtures if f["competition"]} | {"Premier League", "FA Cup", "Carabao Cup", "Champions League", "Friendly"}
+    )
+    comp_choice = col_comp.selectbox("Competition", existing_comps + ["➕ Other…"], key="fx_comp")
+    competition = col_comp.text_input("Competition name", key="fx_comp_new").strip() if comp_choice == "➕ Other…" else comp_choice
+    venue = col_venue.radio("Venue", ["Home", "Away"], horizontal=True, key="fx_venue")
+    opponent_name = _team_picker(conn, f"Opponent (you are {my_team_name})", key="fx_opponent")
+
+    default_dir = f"data/screenshots/{match_date.isoformat()}"
+    screenshot_dir = st.text_input(
+        "Screenshot folder for this match (drop this day's images there, then hit Process below)",
+        value=default_dir, key="fx_dir",
+    )
+    if st.button("Create fixture", type="primary", disabled=opponent_name is None or opponent_name == my_team_name):
+        opponent_id = get_or_create_team(conn, opponent_name)
+        season_id = get_or_create_season(conn, "2025-26")
+        matchweek = conn.execute("SELECT COUNT(*) + 1 FROM matches WHERE season_id = ?", (season_id,)).fetchone()[0]
+        home_id, away_id = (team_id, opponent_id) if venue == "Home" else (opponent_id, team_id)
+        create_match(
+            conn, season_id, matchweek, home_id, away_id, screenshot_dir,
+            date=match_date.isoformat(), competition=competition or None,
+        )
+        st.session_state["schedule_flash"] = f"Fixture created for {match_date.isoformat()}."
+        st.rerun()
+
+    if not fixtures:
+        return
+
+    st.divider()
+    st.subheader("Record result / process screenshots")
+    labels = {
+        f"{f['date'] or 'undated'}  {f['home_team']} vs {f['away_team']}"
+        f"  ({f['competition'] or 'no comp'}, id {f['match_id']})": f
+        for f in fixtures
+    }
+    fixture = labels[st.selectbox("Fixture", list(labels), key="fx_edit")]
+
+    col_home, col_away, col_save = st.columns([1, 1, 2])
+    home_score = col_home.number_input(f"{fixture['home_team']} goals", min_value=0, step=1,
+                                       value=fixture["home_score"] or 0, key="fx_hs")
+    away_score = col_away.number_input(f"{fixture['away_team']} goals", min_value=0, step=1,
+                                       value=fixture["away_score"] or 0, key="fx_as")
+    col_save.write("")
+    if col_save.button("Save result"):
+        update_match_result(conn, fixture["match_id"], int(home_score), int(away_score))
+        st.session_state["schedule_flash"] = "Result saved — the record above updates from it."
+        st.rerun()
+
+    st.caption(
+        f"{fixture['captures']} capture(s) processed for this fixture so far. "
+        f"Screenshots are read from `{fixture['screenshot_dir']}`."
+    )
+    col_process, col_recompute, col_delete = st.columns(3)
+    if col_process.button("Process screenshots (OCR)"):
+        if not os.path.isdir(fixture["screenshot_dir"]):
+            st.error(f"Folder not found: {fixture['screenshot_dir']} — create it and drop this match's images in.")
+        else:
+            with st.spinner("Running OCR — the first run downloads/loads the EasyOCR model and takes a while..."):
+                from fifa_analytics.ocr.pipeline import run_match_dir  # heavy import, only on click
+
+                run_match_dir(db_path, fixture["screenshot_dir"], fixture["match_id"],
+                              fixture["home_team"], fixture["away_team"])
+            st.session_state["schedule_flash"] = (
+                "Screenshots processed. Review them in the validation UI "
+                "(`streamlit run src/fifa_analytics/validate_app.py -- --db "
+                f"{db_path}`), then click 'Recompute model + xPTS'."
+            )
+            st.rerun()
+    if col_recompute.button("Recompute model + xPTS"):
+        history_rows = recompute_all(db_path)
+        xpts_rows = compute_xpts(db_path)
+        st.session_state["schedule_flash"] = (
+            f"Recomputed from reviewed data: {history_rows} true-overall row(s), {xpts_rows} xPTS row(s)."
+        )
+        st.rerun()
+    if col_delete.button("Delete fixture", type="secondary"):
+        delete_match(conn, fixture["match_id"])
+        st.session_state["schedule_flash"] = "Fixture deleted (including any captures/stats attached to it)."
+        st.rerun()
+
+
+def manage_tab(conn, db_path: str) -> None:
+    _flash("manage_flash")
+
+    st.subheader("Player search & transfer")
+    st.caption(
+        "Re-home a player whose move you know about but haven't captured yet "
+        "— the OCR pipeline does this automatically when it sees them in a "
+        "screenshot, this is for getting ahead of it."
+    )
+    search = st.text_input("Search players by name (any team, regens included)", key="pl_search")
+    if search.strip():
+        found = queries.search_players(conn, search.strip())
+        if not found:
+            st.caption("No players match.")
+        else:
+            st.dataframe(pd.DataFrame(found), use_container_width=True, hide_index=True)
+            options = {
+                f"{p['name']} ({p['team'] or 'no team'}, {p['position'] or '?'}, {p['base_overall'] or 'regen'})": p
+                for p in found
+            }
+            player = options[st.selectbox("Player to move", list(options), key="pl_pick")]
+            destination_name = _team_picker(conn, "New team", key="pl_dest")
+            if st.button("Transfer player", type="primary", disabled=destination_name is None):
+                destination_id = get_or_create_team(conn, destination_name)
+                set_player_team(conn, player["player_id"], destination_id)
+                st.session_state["manage_flash"] = f"{player['name']} moved to {destination_name}."
+                st.rerun()
+
+    st.divider()
+    st.subheader("Import a team's card data")
+    st.caption(
+        "Pulls a club's full roster from EAFC26-DataHub — do this for a new "
+        "opponent before processing their screenshots so players match by name."
+    )
+    club = st.text_input("Club name exactly as the dataset spells it (e.g. 'Bayer 04 Leverkusen')", key="imp_club")
+    if st.button("Import card data", disabled=not club.strip()):
+        from fifa_analytics.cards.eafc26_datahub_importer import scrape_and_store  # network only on click
+
+        with st.spinner("Fetching the dataset..."):
+            stored = scrape_and_store(club.strip(), db_path, "eafc26-datahub:main")
+        if stored:
+            st.session_state["manage_flash"] = f"{stored} player(s) imported for {club.strip()}."
+            st.rerun()
+        else:
+            st.error(f"No players found for {club.strip()!r} — check the exact club spelling in the dataset.")
+
+    st.divider()
+    st.subheader("Danger zone: reset match stats")
+    counts = {
+        "matches": conn.execute("SELECT COUNT(*) FROM matches").fetchone()[0],
+        "captures": conn.execute("SELECT COUNT(*) FROM ocr_captures").fetchone()[0],
+        "stat values": conn.execute("SELECT COUNT(*) FROM match_stat_values").fetchone()[0],
+        "model history rows": conn.execute("SELECT COUNT(*) FROM true_overall_history").fetchone()[0],
+    }
+    st.caption(
+        f"Deletes ALL match data — {counts['matches']} match(es), {counts['captures']} capture(s), "
+        f"{counts['stat values']} stat value(s), {counts['model history rows']} model history row(s), "
+        "plus events/xPTS/seasons. Teams, players (card data), and the scouting pool are kept. "
+        "This cannot be undone."
+    )
+    confirmation = st.text_input("Type RESET to confirm", key="reset_confirm")
+    if st.button("Reset match stats", type="primary", disabled=confirmation != "RESET"):
+        deleted = reset_match_data(conn)
+        total = sum(deleted.values())
+        st.session_state["manage_flash"] = f"Reset done — {total} row(s) deleted: " + ", ".join(
+            f"{table} {n}" for table, n in deleted.items() if n
+        )
+        st.rerun()
+
+
 def main():
     st.set_page_config(page_title="FIFA Career Mode Analytics", layout="wide")
     st.title("FIFA Career Mode Analytics")
 
-    conn = get_conn(get_db_path())
+    db_path = get_db_path()
+    init_db(db_path)  # idempotent; applies schema migrations on upgrade
+    conn = get_conn(db_path)
     teams = queries.teams_with_players(conn)
     if not teams:
         st.info(
@@ -280,12 +498,13 @@ def main():
     labels = {f"{t['name']} ({t['player_count']} players)": t["team_id"] for t in teams}
     team_id = labels[st.sidebar.selectbox("Team", list(labels))]
     st.sidebar.caption(
-        "Views read reviewed data only (whatever the model/xPTS CLIs last "
-        "computed). Unreviewed OCR never leaks in here."
+        "Analysis tabs read reviewed data only (whatever the model/xPTS "
+        "recompute last saw). Schedule and Manage write, but only when you "
+        "click their buttons."
     )
 
-    tab_squad, tab_progress, tab_season, tab_xi, tab_scout = st.tabs(
-        ["Squad", "Progression", "Season (xPTS)", "Best XI", "Scouting"]
+    tab_squad, tab_progress, tab_season, tab_xi, tab_scout, tab_schedule, tab_manage = st.tabs(
+        ["Squad", "Progression", "Season (xPTS)", "Best XI", "Scouting", "Schedule", "Manage"]
     )
     with tab_squad:
         squad_tab(conn, team_id)
@@ -297,6 +516,10 @@ def main():
         best_xi_tab(conn, team_id)
     with tab_scout:
         scouting_tab(conn, team_id)
+    with tab_schedule:
+        schedule_tab(conn, team_id, db_path)
+    with tab_manage:
+        manage_tab(conn, db_path)
 
 
 if __name__ == "__main__":

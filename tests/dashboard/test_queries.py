@@ -97,3 +97,54 @@ def test_team_match_xpts_names_opponent_both_home_and_away(conn):
     table = queries.season_xpts_table(conn)
     assert table[0]["team"] == "Us FC"
     assert table[0]["delta"] == round(4.0 - 3.5, 2)
+
+
+def test_schedule_lists_fixtures_with_capture_counts(conn):
+    us, them, m1, m2, _ = _setup(conn)
+    conn.execute(
+        "INSERT INTO ocr_captures (match_id, capture_type, screenshot_path) VALUES (?, 'team_summary', 'x.png')",
+        (m1,),
+    )
+    conn.execute("UPDATE matches SET date = '2026-07-01', competition = 'Premier League' WHERE match_id = ?", (m1,))
+    conn.execute("UPDATE matches SET date = '2026-07-08', competition = 'FA Cup' WHERE match_id = ?", (m2,))
+    conn.commit()
+
+    fixtures = queries.schedule(conn)
+    assert [f["date"] for f in fixtures] == ["2026-07-08", "2026-07-01"]  # newest first
+    by_id = {f["match_id"]: f for f in fixtures}
+    assert by_id[m1]["captures"] == 1 and by_id[m2]["captures"] == 0
+    assert by_id[m1]["home_team"] == "Us FC" and by_id[m1]["away_team"] == "Them FC"
+
+
+def test_team_record_totals_and_per_competition(conn):
+    us, them, m1, m2, _ = _setup(conn)
+    # m1: us home, 2-0 win. m2: us away, 1-1 draw. (scores set in _setup)
+    conn.execute("UPDATE matches SET competition = 'Premier League' WHERE match_id = ?", (m1,))
+    conn.execute("UPDATE matches SET competition = 'FA Cup' WHERE match_id = ?", (m2,))
+    conn.commit()
+
+    record = queries.team_record(conn, us)
+    total = record[0]
+    assert total["competition"] == "All competitions"
+    assert (total["played"], total["W"], total["D"], total["L"]) == (2, 1, 1, 0)
+    assert (total["GF"], total["GA"], total["points"]) == (3, 1, 4)
+    by_comp = {r["competition"]: r for r in record[1:]}
+    assert by_comp["Premier League"]["W"] == 1
+    assert by_comp["FA Cup"]["D"] == 1
+
+    # unplayed fixtures (no scores) don't count
+    conn.execute("UPDATE matches SET home_score = NULL, away_score = NULL WHERE match_id = ?", (m2,))
+    conn.commit()
+    record = queries.team_record(conn, us)
+    assert record[0]["played"] == 1
+
+
+def test_search_players_matches_substring_any_team(conn):
+    us, them, *_ = _setup(conn)
+    from fifa_analytics.db.models import upsert_player
+    upsert_player(conn, "Alicia Keys", "CM", 70, "test", team_id=them)
+
+    found = queries.search_players(conn, "Alic")
+    names = [p["name"] for p in found]
+    assert names == ["Alice", "Alicia Keys"]  # overall DESC
+    assert found[0]["team"] == "Us FC" and found[1]["team"] == "Them FC"

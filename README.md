@@ -29,13 +29,32 @@ Read-only Streamlit views over everything Phases 1-4 compute, one tab each
 - **Scouting** — Phase 4 behind formation/tactic pickers: weakest slots,
   upgrade-only transfer targets per position group, and academy prospects
   with age/growth-room sliders.
+- **Schedule** — the calendar/management view: add fixtures by date with a
+  competition and venue, record results, and see your W/D/L record overall
+  and per competition (points, GF/GA). Each fixture carries a screenshot
+  folder — drop that day's images there and click *Process screenshots* to
+  run the OCR pipeline on them from inside the dashboard (the EasyOCR model
+  loads on first click, so that one takes a while), then review in
+  `validate_app.py` and click *Recompute model + xPTS*. Fat-fingered
+  fixtures can be deleted along with anything attached to them.
+- **Manage** — player search across every roster (regens included) with a
+  transfer control, for moves you know happened in your save but haven't
+  captured yet (the OCR pipeline re-homes players automatically when it
+  *sees* them; this gets ahead of it). Also: one-click card-data import for
+  a new opponent, and a danger zone that resets all match data (matches,
+  captures, stats, model history, xPTS, seasons) while keeping teams,
+  players, and the scouting pool — gated behind typing `RESET`.
 
 Design decisions worth knowing:
 
-- **The dashboard never writes.** OCR corrections stay in `validate_app.py`,
-  model recomputes in the model/analysis CLIs — so a browser tab left open
-  can't corrupt anything. It also only *reads* what those CLIs last wrote,
-  which means it inherits their reviewed-data-only trust boundary.
+- **Write boundary.** The five analysis tabs never write. Schedule and
+  Manage write only on explicit button clicks, through the same helpers in
+  `db/models.py` the CLIs use. Per-stat OCR corrections deliberately stay
+  in `validate_app.py`, which remains the trust gate for model inputs —
+  the analysis tabs still only reflect reviewed data.
+- The app runs `init_db` at startup (idempotent), so schema migrations —
+  like the `matches.competition` column the schedule needs — apply
+  automatically when you pull an update.
 - Data access lives in `dashboard/queries.py` (plain functions, no
   streamlit) so every view's logic is unit-testable; `dashboard/app.py` is
   UI only, smoke-tested end-to-end with streamlit's `AppTest` against both
