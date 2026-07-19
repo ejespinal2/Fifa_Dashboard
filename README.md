@@ -370,8 +370,10 @@ snapshot, never hand-edited data like your players/matches).
   icon classified from the icon column at the row's own height: `goal`
   (achromatic ball — confirmed against a real screenshot), `yellow_card` /
   `red_card` (EA's standard color-coding — plausible, unverified against a
-  real card event), or `substitution` (green+red arrow pair; checked FIRST
-  since its red pixels would otherwise win as a red card). If the list
+  real card event), `substitution` (green+red arrow pair; checked FIRST
+  since its red pixels would otherwise win as a red card), or
+  `missed_penalty` (the ball with a red X — dominant white plus a
+  thinner-but-real amount of red). If the list
   needs scrolling, capture it in sections as `team_events.png`,
   `team_events_2.png`, ... — overlapping rows dedupe on (player, minute,
   type). Raw text is always kept per capture regardless. CAVEAT: the icon
