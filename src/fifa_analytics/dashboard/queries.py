@@ -205,6 +205,47 @@ def team_record(conn: sqlite3.Connection, team_id: int) -> list[dict]:
     return out
 
 
+def match_events_list(conn: sqlite3.Connection, match_id: int) -> list[dict]:
+    """Every parsed event for one match, minute order — the match-facts
+    timeline (goals, cards, subs, missed penalties)."""
+    rows = conn.execute(
+        """SELECT me.minute, me.event_type,
+                  p.name AS player, t.name AS team
+           FROM match_events me
+           LEFT JOIN players p ON p.player_id = me.player_id
+           LEFT JOIN teams t ON t.team_id = me.team_id
+           WHERE me.match_id = ?
+           ORDER BY me.minute IS NULL, me.minute""",
+        (match_id,),
+    ).fetchall()
+    return [dict(row) for row in rows]
+
+
+def match_team_stats(conn: sqlite3.Connection, match_id: int) -> list[dict]:
+    """The match's team_summary stats side by side: one row per stat with
+    home and away values (either side None if its capture is missing)."""
+    match = conn.execute(
+        "SELECT home_team_id, away_team_id FROM matches WHERE match_id = ?", (match_id,)
+    ).fetchone()
+    if match is None:
+        return []
+    rows = conn.execute(
+        """SELECT msv.stat_name, oc.team_id, msv.stat_value
+           FROM ocr_captures oc
+           JOIN match_stat_values msv ON msv.capture_id = oc.capture_id
+           WHERE oc.match_id = ? AND oc.capture_type = 'team_summary'""",
+        (match_id,),
+    ).fetchall()
+    by_stat: dict[str, dict] = {}
+    for row in rows:
+        entry = by_stat.setdefault(row["stat_name"], {"stat": row["stat_name"], "home": None, "away": None})
+        if row["team_id"] == match["home_team_id"]:
+            entry["home"] = row["stat_value"]
+        elif row["team_id"] == match["away_team_id"]:
+            entry["away"] = row["stat_value"]
+    return sorted(by_stat.values(), key=lambda e: e["stat"])
+
+
 def search_players(conn: sqlite3.Connection, text: str, limit: int = 25) -> list[dict]:
     """Case-insensitive substring search across ALL players in the
     database (every imported roster + regens), current team named."""

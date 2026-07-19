@@ -312,9 +312,30 @@ def _find_team_events_files(match_path: Path) -> list[Path]:
     return sorted(found)
 
 
+def _find_unreserved_images(match_path: Path) -> list[Path]:
+    """Every image in the folder that ISN'T using a reserved name
+    (team_summary / team_events[_N] / player_summary_*) — these get
+    content-classified instead of name-routed, so straight-off-the-console
+    filenames like IMG_0042.jpg work without renaming."""
+    reserved = set(_find_player_summary_files(match_path)) | set(_find_team_events_files(match_path))
+    single = _find_single_file(match_path, "team_summary")
+    if single is not None:
+        reserved.add(single)
+    found = set()
+    for ext in IMAGE_EXTENSIONS:
+        found.update(match_path.glob(f"*{ext}"))
+    return sorted(p for p in found if p not in reserved and "calibration" not in p.name)
+
+
 def run_match_dir(db_path: str, match_dir: str, match_id: int, home_team_name: str, away_team_name: str) -> None:
     """home_team_name/away_team_name must already exist in the teams table
     (i.e. you've run the card importer for both squads first).
+
+    Files using the reserved names are routed by name, exactly as before.
+    Any OTHER image in the folder is classified by content
+    (ocr/classify_screen.py) and routed the same way — so a folder of
+    unrenamed console screenshots works. Screens the pipeline can't parse
+    (e.g. the Possession tab's Threat timeline) are skipped with a note.
     """
     conn = connect(db_path)
     try:
@@ -328,22 +349,41 @@ def run_match_dir(db_path: str, match_dir: str, match_id: int, home_team_name: s
         csv_rows = load_rows(RAW_CSV_URL)
         match_path = Path(match_dir)
 
+        # 1) content-classify every non-reserved image, then merge into the
+        #    name-routed buckets below
+        from fifa_analytics.ocr.classify_screen import classify_screenshot
+
+        classified: dict[str, list[Path]] = {"team_summary": [], "team_events": [], "player_summary": []}
+        for file in _find_unreserved_images(match_path):
+            kind = classify_screenshot(cv2.imread(str(file)))
+            if kind in classified:
+                classified[kind].append(file)
+                print(f"{file.name}: auto-classified as {kind}")
+            else:
+                print(f"{file.name}: unsupported screen (e.g. Possession/Threat tab) — skipped. "
+                      "Rename to a reserved name to force a type.")
+
+        # 2) name-routed files, exactly as before
+        team_summary_files = []
         team_summary = _find_single_file(match_path, "team_summary")
         if team_summary is not None:
-            process_team_summary(conn, match_id, home_team_id, away_team_id, str(team_summary))
-        else:
-            print(f"No team_summary.(png/jpg/jpeg) found in {match_dir}")
+            team_summary_files.append(team_summary)
+        team_summary_files.extend(classified["team_summary"])
+        if not team_summary_files:
+            print(f"No team_summary screenshot found in {match_dir}")
+        for file in team_summary_files:
+            process_team_summary(conn, match_id, home_team_id, away_team_id, str(file))
 
-        team_events_files = _find_team_events_files(match_path)
+        team_events_files = _find_team_events_files(match_path) + classified["team_events"]
         if not team_events_files:
-            print(f"No team_events.(png/jpg/jpeg) found in {match_dir}")
+            print(f"No team_events screenshot found in {match_dir}")
         for file in team_events_files:
             _, stored = process_team_events(conn, match_id, str(file), candidates)
             print(f"{file.name}: {len(stored)} new event(s) parsed")
 
-        player_summary_files = _find_player_summary_files(match_path)
+        player_summary_files = _find_player_summary_files(match_path) + classified["player_summary"]
         if not player_summary_files:
-            print(f"No player_summary_*.(png/jpg/jpeg) files found in {match_dir}")
+            print(f"No player_summary screenshots found in {match_dir}")
         for file in player_summary_files:
             capture_id, confidence = process_player_summary(
                 conn, match_id, str(file), home_team_id, home_team_name, away_team_id, away_team_name, candidates, csv_rows

@@ -26,3 +26,13 @@ def test_row_icon_region_maps_band_fractions_to_image_fractions():
     # a row lower in the band maps strictly lower in the image
     lower = _row_icon_region(band, {"y_top": 0.5, "y_bottom": 0.6})
     assert lower[1] > y0
+
+
+def test_find_unreserved_images_excludes_reserved_and_calibration(tmp_path):
+    from fifa_analytics.ocr.pipeline import _find_unreserved_images
+    for name in ("team_summary.png", "team_events.png", "team_events_2.jpg",
+                 "player_summary_1.png", "IMG_0042.jpg", "screenshot 55.jpeg",
+                 "team_events_calibration.png", "notes.txt"):
+        (tmp_path / name).touch()
+    found = [p.name for p in _find_unreserved_images(Path(tmp_path))]
+    assert found == ["IMG_0042.jpg", "screenshot 55.jpeg"]

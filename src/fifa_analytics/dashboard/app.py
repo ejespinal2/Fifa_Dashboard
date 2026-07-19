@@ -484,6 +484,44 @@ def schedule_tab(conn, team_id: int, db_path: str) -> None:
         st.session_state["schedule_flash"] = "Result saved — the record above updates from it."
         st.rerun()
 
+    st.subheader("Match facts")
+    score = (
+        f"{fixture['home_team']} {fixture['home_score']} : {fixture['away_score']} {fixture['away_team']}"
+        if fixture["home_score"] is not None and fixture["away_score"] is not None
+        else f"{fixture['home_team']} vs {fixture['away_team']} — no result recorded yet"
+    )
+    st.markdown(f"**{score}**" + (f"  ·  {fixture['competition']}" if fixture["competition"] else "")
+                + (f"  ·  {fixture['date']}" if fixture["date"] else ""))
+
+    event_icons = {"goal": "⚽", "missed_penalty": "❌⚽", "yellow_card": "🟨",
+                   "red_card": "🟥", "substitution": "🔁", "unknown": "❔"}
+    events = queries.match_events_list(conn, fixture["match_id"])
+    if events:
+        st.dataframe(
+            pd.DataFrame(
+                {
+                    "minute": e["minute"],
+                    "event": f"{event_icons.get(e['event_type'], '❔')} {e['event_type']}",
+                    "player": e["player"] or "(unmatched)",
+                    "team": e["team"] or "",
+                }
+                for e in events
+            ),
+            use_container_width=True, hide_index=True,
+        )
+    else:
+        st.caption("No parsed events for this fixture yet — process its events screenshots below.")
+
+    stats = queries.match_team_stats(conn, fixture["match_id"])
+    if stats:
+        with st.expander("Team stats (from the team summary screenshot)"):
+            st.dataframe(
+                pd.DataFrame(stats).rename(
+                    columns={"home": fixture["home_team"], "away": fixture["away_team"]}
+                ),
+                use_container_width=True, hide_index=True,
+            )
+
     st.caption(
         f"{fixture['captures']} capture(s) processed for this fixture so far. "
         f"Screenshots are read from `{fixture['screenshot_dir']}`."

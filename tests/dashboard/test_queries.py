@@ -148,3 +148,33 @@ def test_search_players_matches_substring_any_team(conn):
     names = [p["name"] for p in found]
     assert names == ["Alice", "Alicia Keys"]  # overall DESC
     assert found[0]["team"] == "Us FC" and found[1]["team"] == "Them FC"
+
+
+def test_match_facts_events_and_side_by_side_stats(conn):
+    us, them, m1, _, p1 = _setup(conn)
+    capture = conn.execute(
+        "INSERT INTO ocr_captures (match_id, capture_type, screenshot_path, team_id) VALUES (?, 'team_summary', 'x.png', ?)",
+        (m1, us),
+    ).lastrowid
+    conn.execute("INSERT INTO match_stat_values (capture_id, stat_name, stat_value) VALUES (?, 'possession_pct', 32)", (capture,))
+    away_capture = conn.execute(
+        "INSERT INTO ocr_captures (match_id, capture_type, screenshot_path, team_id) VALUES (?, 'team_summary', 'x.png', ?)",
+        (m1, them),
+    ).lastrowid
+    conn.execute("INSERT INTO match_stat_values (capture_id, stat_name, stat_value) VALUES (?, 'possession_pct', 68)", (away_capture,))
+    conn.execute(
+        "INSERT INTO match_events (match_id, capture_id, team_id, player_id, minute, event_type) VALUES (?, ?, ?, ?, 37, 'goal')",
+        (m1, capture, us, p1),
+    )
+    conn.execute(
+        "INSERT INTO match_events (match_id, capture_id, team_id, player_id, minute, event_type) VALUES (?, ?, ?, ?, 12, 'missed_penalty')",
+        (m1, capture, us, p1),
+    )
+    conn.commit()
+
+    events = queries.match_events_list(conn, m1)
+    assert [(e["minute"], e["event_type"]) for e in events] == [(12, "missed_penalty"), (37, "goal")]
+    assert events[1]["player"] == "Alice" and events[1]["team"] == "Us FC"
+
+    stats = queries.match_team_stats(conn, m1)
+    assert stats == [{"stat": "possession_pct", "home": 32.0, "away": 68.0}]

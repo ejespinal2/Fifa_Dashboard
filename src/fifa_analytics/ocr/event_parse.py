@@ -68,18 +68,28 @@ def classify_event_icon(icon_crop: np.ndarray) -> str:
     green = (hue >= 40) & (hue <= 85) & (sat > 100) & (val > 100)
 
     total_pixels = icon_crop.shape[0] * icon_crop.shape[1]
+    threshold = MIN_ICON_PIXEL_FRACTION * total_pixels
     # Substitutions are checked first: EA's sub icon is a green+red arrow
     # pair, so its red pixels would otherwise win as "red_card". Any real
     # amount of icon-green means sub — no card or ball icon contains green.
-    if int(np.count_nonzero(green)) >= MIN_ICON_PIXEL_FRACTION * total_pixels:
+    if int(np.count_nonzero(green)) >= threshold:
         return "substitution"
 
+    white_count = int(np.count_nonzero(white))
+    red_count = int(np.count_nonzero(red))
+    # Missed penalty: the ball icon with a red X through it — a real amount
+    # of white (the ball) AND a smaller-but-real amount of red (the X
+    # stroke, thinner than a solid card, hence the halved bar). A plain
+    # goal ball has no red; a red card has no white.
+    if white_count >= threshold and red_count >= 0.5 * threshold:
+        return "missed_penalty"
+
     counts = {
-        "goal": int(np.count_nonzero(white)),
+        "goal": white_count,
         "yellow_card": int(np.count_nonzero(yellow)),
-        "red_card": int(np.count_nonzero(red)),
+        "red_card": red_count,
     }
     best = max(counts, key=counts.get)
-    if counts[best] < MIN_ICON_PIXEL_FRACTION * total_pixels:
+    if counts[best] < threshold:
         return "unknown"
     return best

@@ -70,3 +70,20 @@ def test_red_card_without_green_still_red():
     crop = np.full((20, 20, 3), (20, 15, 10), dtype=np.uint8)
     crop[4:16, 6:14] = (0, 0, 230)
     assert classify_event_icon(crop) == "red_card"
+
+
+def test_classify_missed_penalty_ball_with_red_x():
+    # White ball with a red X stroke through it -- white dominant plus a
+    # thinner-but-real amount of red.
+    crop = np.full((20, 20, 3), (20, 15, 10), dtype=np.uint8)
+    crop[4:16, 4:16] = (235, 235, 235)          # ball
+    for i in range(12):                          # the X, two diagonal strokes
+        crop[4 + i, 4 + i] = (0, 0, 230)
+        crop[4 + i, 15 - i] = (0, 0, 230)
+    assert classify_event_icon(crop) == "missed_penalty"
+
+
+def test_plain_white_ball_still_goal_not_missed_penalty():
+    crop = np.full((20, 20, 3), (20, 15, 10), dtype=np.uint8)
+    crop[4:16, 4:16] = (235, 235, 235)
+    assert classify_event_icon(crop) == "goal"

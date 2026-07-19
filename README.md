@@ -86,8 +86,20 @@ Read-only Streamlit views over everything Phases 1-4 compute, one tab each
   folder — drop that day's images there and click *Process screenshots* to
   run the OCR pipeline on them from inside the dashboard (the EasyOCR model
   loads on first click, so that one takes a while), then review in
-  `validate_app.py` and click *Recompute model + xPTS*. Fat-fingered
-  fixtures can be deleted along with anything attached to them.
+  `validate_app.py` and click *Recompute model + xPTS*. Selecting a fixture
+  shows its **match facts**: the score line, the parsed event timeline
+  (⚽ goals, ❌⚽ missed penalties, 🟨/🟥 cards, 🔁 subs, minute by minute,
+  player and team named), and the team-summary stats side by side.
+  Fat-fingered fixtures can be deleted along with anything attached to
+  them.
+- **Screenshot filenames are optional.** Reserved names (`team_summary`,
+  `team_events`, `team_events_2`…, `player_summary_*`) are routed by name,
+  exactly as always — and any *other* image in the folder is classified by
+  content (`ocr/classify_screen.py`): the Player Performance screen by its
+  header, the team Summary by its stat labels, the Events tab by its
+  "player + minute" rows. Unparseable screens (e.g. the Possession tab's
+  Threat timeline) are skipped with a printed note. If auto-classification
+  ever gets one wrong, renaming the file to a reserved name overrides it.
 - **Manage** — player search across every roster (regens included) with a
   transfer control, for moves you know happened in your save but haven't
   captured yet (the OCR pipeline re-homes players automatically when it
