@@ -167,3 +167,22 @@ def test_settings_roundtrip(tmp_path):
     set_setting(conn, "my_team_name", "Them FC")  # overwrite, not duplicate
     assert get_setting(conn, "my_team_name") == "Them FC"
     conn.close()
+
+
+def test_event_exists_dedupes_overlapping_screenshots(tmp_path):
+    from fifa_analytics.db.models import create_match_event, event_exists
+    path = str(tmp_path / "t.db")
+    init_db(path)
+    conn = connect(path)
+    us, them, match, player = _match_with_data(conn)
+    capture = conn.execute(
+        "INSERT INTO ocr_captures (match_id, capture_type, screenshot_path) VALUES (?, 'team_events', 'e.png')",
+        (match,),
+    ).lastrowid
+
+    assert not event_exists(conn, match, player, 37, "goal")
+    create_match_event(conn, match, capture, us, player, 37, "goal")
+    assert event_exists(conn, match, player, 37, "goal")
+    # same player+minute but different type is a different event (goal + booking in the same minute)
+    assert not event_exists(conn, match, player, 37, "yellow_card")
+    conn.close()

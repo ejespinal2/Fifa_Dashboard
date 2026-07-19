@@ -139,3 +139,10 @@ TEAM_EVENTS_REGIONS = {
     # against a real card-event screenshot.
     "event_icon": (0.44, 0.34, 0.485, 0.41),
 }
+
+# x-range of the column the goal/card/sub icons sit in, one per event row —
+# multi-row parsing pairs this column with each OCR'd row's own vertical
+# band to find that row's icon. Derived from event_icon above (the single
+# verified sample); if a busy multi-event page lays rows out differently,
+# calibrate against it and adjust here.
+TEAM_EVENTS_ICON_COLUMN = (0.44, 0.485)

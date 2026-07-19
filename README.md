@@ -351,19 +351,23 @@ snapshot, never hand-edited data like your players/matches).
 
 ## Known gaps going into real use
 
-- **Team Events: goals vs. cards are distinguished, but only for one event
-  per screenshot, and card colors are unverified.** `ocr/event_parse.py`
-  parses the player name + minute out of the raw OCR text, matches the
-  player against both rosters to get their team, and classifies the
-  event icon by color (`goal` = achromatic ball icon — confirmed against a
-  real screenshot; `yellow_card`/`red_card` = EA's standard color-coding —
-  plausible but not yet checked against an actual card-event screenshot).
-  A structured row lands in `match_events` when all of that resolves; the
-  raw text is always kept regardless. What's still unconfirmed is whether a
-  match with 2+ events shows them as multiple rows in the same screenshot
-  (in which case only the first would currently be parsed) or one at a time
-  via the toggle controls visible in the screenshot — send a multi-event
-  screenshot to settle this.
+- **Team Events: any number of events per screenshot, any number of
+  screenshots per match — but row layout is calibrated from one sample.**
+  The event band is OCR'd line by line; every line that parses as
+  "player minute" becomes a structured `match_events` row, with that row's
+  icon classified from the icon column at the row's own height: `goal`
+  (achromatic ball — confirmed against a real screenshot), `yellow_card` /
+  `red_card` (EA's standard color-coding — plausible, unverified against a
+  real card event), or `substitution` (green+red arrow pair; checked FIRST
+  since its red pixels would otherwise win as a red card). If the list
+  needs scrolling, capture it in sections as `team_events.png`,
+  `team_events_2.png`, ... — overlapping rows dedupe on (player, minute,
+  type). Raw text is always kept per capture regardless. CAVEAT: the icon
+  column's x-position (`regions.TEAM_EVENTS_ICON_COLUMN`) derives from the
+  single verified single-event sample; if a busy multi-event page lays
+  rows out differently, run `ocr/calibrate.py` against one and adjust —
+  the multi-row mechanics are covered by synthetic-image tests, but a real
+  busy events page hasn't been through it yet.
 - **No xA (expected assists) field exists on any captured screen** — if
   expected-assist over/underperformance matters to the model, it isn't coming from
   OCR and would need another source or to be dropped.

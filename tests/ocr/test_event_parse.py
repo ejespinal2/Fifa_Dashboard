@@ -55,3 +55,18 @@ def test_classify_small_white_icon_on_noisy_dark_background():
     crop = np.random.randint(20, 90, size=(30, 30, 3), dtype=np.uint8)
     crop[10:19, 10:20] = (230, 230, 230)
     assert classify_event_icon(crop) == "goal"
+
+
+def test_classify_substitution_green_arrow():
+    # EA's sub icon is a green+red arrow pair; green must win even though
+    # red pixels are present (otherwise subs would misread as red cards).
+    crop = np.full((20, 20, 3), (20, 15, 10), dtype=np.uint8)
+    crop[5:15, 2:9] = (0, 200, 0)     # green arrow (BGR)
+    crop[5:15, 11:18] = (0, 0, 220)   # red arrow
+    assert classify_event_icon(crop) == "substitution"
+
+
+def test_red_card_without_green_still_red():
+    crop = np.full((20, 20, 3), (20, 15, 10), dtype=np.uint8)
+    crop[4:16, 6:14] = (0, 0, 230)
+    assert classify_event_icon(crop) == "red_card"

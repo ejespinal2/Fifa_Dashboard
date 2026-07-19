@@ -25,6 +25,67 @@ def read_text(crop: np.ndarray) -> tuple[str, float]:
     return text, confidence
 
 
+def group_fragments_into_lines(fragments: list[dict]) -> list[dict]:
+    """Groups OCR fragments ({text, confidence, y_top, y_bottom, x_left})
+    into visual lines: a fragment joins the current line when its vertical
+    center falls inside the line's band, else it starts a new one. Within a
+    line, fragments read left-to-right. Pure — testable without EasyOCR."""
+    ordered = sorted(fragments, key=lambda f: (f["y_top"] + f["y_bottom"]) / 2)
+    lines: list[dict] = []
+    for fragment in ordered:
+        center = (fragment["y_top"] + fragment["y_bottom"]) / 2
+        target = None
+        for line in lines:
+            if line["y_top"] <= center <= line["y_bottom"]:
+                target = line
+                break
+        if target is None:
+            target = {"fragments": [], "y_top": fragment["y_top"], "y_bottom": fragment["y_bottom"]}
+            lines.append(target)
+        target["fragments"].append(fragment)
+        target["y_top"] = min(target["y_top"], fragment["y_top"])
+        target["y_bottom"] = max(target["y_bottom"], fragment["y_bottom"])
+
+    out = []
+    for line in sorted(lines, key=lambda l: l["y_top"]):
+        parts = sorted(line["fragments"], key=lambda f: f["x_left"])
+        out.append(
+            {
+                "text": " ".join(p["text"] for p in parts),
+                "confidence": sum(p["confidence"] for p in parts) / len(parts),
+                "y_top": line["y_top"],
+                "y_bottom": line["y_bottom"],
+            }
+        )
+    return out
+
+
+def read_lines(crop: np.ndarray) -> list[dict]:
+    """OCR a crop and return its visual lines top-to-bottom:
+    [{text, confidence, y_top, y_bottom}] with y as fractions of the crop
+    height — so callers can map a line back to a vertical slice of the
+    source image (e.g. to find the icon that belongs to an event row)."""
+    if crop is None or crop.size == 0:
+        return []
+    results = _reader().readtext(crop, detail=1, paragraph=False)
+    fragments = [
+        {
+            "text": text,
+            "confidence": confidence,
+            "y_top": min(point[1] for point in box),
+            "y_bottom": max(point[1] for point in box),
+            "x_left": min(point[0] for point in box),
+        }
+        for box, text, confidence in results
+    ]
+    height = crop.shape[0]
+    lines = group_fragments_into_lines(fragments)
+    for line in lines:
+        line["y_top"] = line["y_top"] / height
+        line["y_bottom"] = line["y_bottom"] / height
+    return lines
+
+
 def parse_numeric(raw_text: str) -> float | None:
     """Extracts a single number from OCR text, ignoring surrounding label
     text and a trailing %.

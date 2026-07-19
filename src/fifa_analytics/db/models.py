@@ -267,6 +267,19 @@ def mark_reviewed(conn: sqlite3.Connection, capture_id: int, reviewed_at: str) -
     conn.commit()
 
 
+def event_exists(conn: sqlite3.Connection, match_id: int, player_id: int | None, minute: int | None, event_type: str) -> bool:
+    """True when this exact event is already stored for the match — used to
+    dedupe overlapping team_events screenshots (scrolling the events list
+    and capturing it in sections re-shows the boundary rows)."""
+    row = conn.execute(
+        """SELECT 1 FROM match_events
+           WHERE match_id = ? AND player_id IS ? AND minute IS ? AND event_type = ?
+           LIMIT 1""",
+        (match_id, player_id, minute, event_type),
+    ).fetchone()
+    return row is not None
+
+
 def create_match_event(
     conn: sqlite3.Connection,
     match_id: int,

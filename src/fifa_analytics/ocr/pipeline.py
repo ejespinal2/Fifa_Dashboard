@@ -48,6 +48,7 @@ from fifa_analytics.db.models import (
     connect,
     create_capture,
     create_match_event,
+    event_exists,
     get_team_id_by_name,
     players_for_teams,
     upsert_player,
@@ -55,7 +56,7 @@ from fifa_analytics.db.models import (
 )
 from fifa_analytics.ocr import regions
 from fifa_analytics.ocr.event_parse import classify_event_icon, parse_event_text
-from fifa_analytics.ocr.extract import read_field, read_text
+from fifa_analytics.ocr.extract import read_field, read_lines, read_text
 from fifa_analytics.ocr.player_match import clean_ocr_name, match_player
 from fifa_analytics.ocr.preprocess import clean_for_ocr, crop_fractional
 from fifa_analytics.ocr.team_match import match_team_header
@@ -193,27 +194,52 @@ def process_team_summary(conn, match_id: int, home_team_id: int, away_team_id: i
     return capture_ids
 
 
-def process_team_events(conn, match_id: int, image_path: str, candidates: list) -> tuple[int, dict | None]:
+def _row_icon_region(band: tuple, line: dict) -> tuple:
+    """Maps an OCR'd line's vertical band (fractions of the event_band
+    crop) back to full-image fractional coordinates, paired with the icon
+    column's x-range — the crop where THIS row's goal/card/sub icon lives.
+    The row band is padded 30% vertically: icons are a little taller than
+    the text beside them."""
+    x0, y0, x1, y1 = band
+    icon_x0, icon_x1 = regions.TEAM_EVENTS_ICON_COLUMN
+    band_height = y1 - y0
+    row_top = y0 + line["y_top"] * band_height
+    row_bottom = y0 + line["y_bottom"] * band_height
+    pad = 0.3 * (row_bottom - row_top)
+    return (icon_x0, max(y0, row_top - pad), icon_x1, min(y1, row_bottom + pad))
+
+
+def process_team_events(conn, match_id: int, image_path: str, candidates: list) -> tuple[int, list[dict]]:
     """candidates: combined rosters (players_for_teams(conn, [home_team_id,
     away_team_id])) — used to look up which team the named player belongs
     to, since a team_events screenshot doesn't show a team header the way
     player_summary does.
 
-    Always stores the raw OCR text dump of the whole event band (as
-    before). Additionally attempts to parse ONE structured event — player,
-    minute, and goal/yellow_card/red_card — into the match_events table.
-    See this module's docstring and event_parse.py for what's confirmed
-    (goal icon, from one real sample) vs. unverified (card icon colors;
-    whether multiple events even fit in event_band).
+    Handles ANY number of event rows in the screenshot: the event band is
+    OCR'd line by line, every line that parses as "player minute" becomes a
+    structured match_events row, and each row's icon is classified from the
+    icon column at that row's own height (goal / yellow_card / red_card /
+    substitution / unknown). Lines that don't parse (headers, control
+    hints) are skipped silently; parsed names that match neither roster are
+    reported and skipped.
 
-    Returns (capture_id, event_info) — event_info is None if the name/minute
-    couldn't be parsed from the OCR text, or the parsed name didn't match
-    either roster.
+    A match with more events than fit on screen is captured as several
+    scrolled screenshots (team_events.png, team_events_2.png, ...) — rows
+    visible in two of them are deduped on (player, minute, type), so
+    overlapping scroll positions are safe.
+
+    The full raw text of the band is always stored on the capture
+    regardless, so nothing is lost when parsing falls short.
+
+    Returns (capture_id, [event_info dicts actually stored]).
     """
     image = cv2.imread(image_path)
 
-    band_crop = crop_fractional(image, regions.TEAM_EVENTS_REGIONS["event_band"])
-    raw_text, confidence = read_text(clean_for_ocr(band_crop))
+    band = regions.TEAM_EVENTS_REGIONS["event_band"]
+    band_crop = crop_fractional(image, band)
+    lines = read_lines(clean_for_ocr(band_crop))
+    raw_text = "\n".join(line["text"] for line in lines)
+    confidence = sum(line["confidence"] for line in lines) / len(lines) if lines else 0.0
     capture_id = create_capture(conn, match_id, "team_events", image_path, raw_text=raw_text)
     conn.execute(
         "UPDATE ocr_captures SET ocr_confidence_avg = ? WHERE capture_id = ?",
@@ -221,27 +247,35 @@ def process_team_events(conn, match_id: int, image_path: str, candidates: list) 
     )
     conn.commit()
 
-    event_info = None
-    name, minute = parse_event_text(raw_text)
-    if name is None or minute is None:
-        print(f"team_events: couldn't parse a player name + minute from OCR text {raw_text!r}")
-        return capture_id, event_info
+    stored: list[dict] = []
+    parsed_any = False
+    for line in lines:
+        name, minute = parse_event_text(line["text"])
+        if name is None or minute is None:
+            continue
+        parsed_any = True
 
-    player_match = match_player(clean_ocr_name(name), candidates)
-    if player_match.player_id is None:
-        print(f"team_events: parsed {name!r} at minute {minute} but couldn't match to either roster.")
-        return capture_id, event_info
+        player_match = match_player(clean_ocr_name(name), candidates)
+        if player_match.player_id is None:
+            print(f"team_events: parsed {name!r} at minute {minute} but couldn't match to either roster.")
+            continue
 
-    icon_crop = crop_fractional(image, regions.TEAM_EVENTS_REGIONS["event_icon"])
-    event_type = classify_event_icon(icon_crop)
-    create_match_event(conn, match_id, capture_id, player_match.team_id, player_match.player_id, minute, event_type)
-    event_info = {
-        "player_id": player_match.player_id,
-        "team_id": player_match.team_id,
-        "minute": minute,
-        "event_type": event_type,
-    }
-    return capture_id, event_info
+        icon_crop = crop_fractional(image, _row_icon_region(band, line))
+        event_type = classify_event_icon(icon_crop)
+        if event_exists(conn, match_id, player_match.player_id, minute, event_type):
+            continue  # same row seen in an overlapping scrolled screenshot
+        create_match_event(conn, match_id, capture_id, player_match.team_id, player_match.player_id, minute, event_type)
+        stored.append(
+            {
+                "player_id": player_match.player_id,
+                "team_id": player_match.team_id,
+                "minute": minute,
+                "event_type": event_type,
+            }
+        )
+    if not parsed_any:
+        print(f"team_events: no 'player minute' rows parsed from OCR text {raw_text!r}")
+    return capture_id, stored
 
 
 # PS5 screenshots, "Save As" from a browser, etc. don't reliably land as
@@ -263,6 +297,18 @@ def _find_player_summary_files(match_path: Path) -> list[Path]:
     found = set()
     for ext in IMAGE_EXTENSIONS:
         found.update(match_path.glob(f"player_summary_*{ext}"))
+    return sorted(found)
+
+
+def _find_team_events_files(match_path: Path) -> list[Path]:
+    """team_events.png alone, or team_events.png + team_events_2.png + ...
+    when the events list needed scrolling to capture in full. Overlap
+    between scroll positions is fine — rows dedupe on (player, minute,
+    type) at insert time."""
+    found = set()
+    for ext in IMAGE_EXTENSIONS:
+        found.update(match_path.glob(f"team_events{ext}"))
+        found.update(match_path.glob(f"team_events_*{ext}"))
     return sorted(found)
 
 
@@ -288,11 +334,12 @@ def run_match_dir(db_path: str, match_dir: str, match_id: int, home_team_name: s
         else:
             print(f"No team_summary.(png/jpg/jpeg) found in {match_dir}")
 
-        team_events = _find_single_file(match_path, "team_events")
-        if team_events is not None:
-            process_team_events(conn, match_id, str(team_events), candidates)
-        else:
+        team_events_files = _find_team_events_files(match_path)
+        if not team_events_files:
             print(f"No team_events.(png/jpg/jpeg) found in {match_dir}")
+        for file in team_events_files:
+            _, stored = process_team_events(conn, match_id, str(file), candidates)
+            print(f"{file.name}: {len(stored)} new event(s) parsed")
 
         player_summary_files = _find_player_summary_files(match_path)
         if not player_summary_files:

@@ -65,6 +65,14 @@ def classify_event_icon(icon_crop: np.ndarray) -> str:
     white = (sat < 60) & (val > 150)
     yellow = (hue >= 15) & (hue <= 40) & (sat > 100) & (val > 100)
     red = ((hue <= 10) | (hue >= 170)) & (sat > 100) & (val > 100)
+    green = (hue >= 40) & (hue <= 85) & (sat > 100) & (val > 100)
+
+    total_pixels = icon_crop.shape[0] * icon_crop.shape[1]
+    # Substitutions are checked first: EA's sub icon is a green+red arrow
+    # pair, so its red pixels would otherwise win as "red_card". Any real
+    # amount of icon-green means sub — no card or ball icon contains green.
+    if int(np.count_nonzero(green)) >= MIN_ICON_PIXEL_FRACTION * total_pixels:
+        return "substitution"
 
     counts = {
         "goal": int(np.count_nonzero(white)),
@@ -72,7 +80,6 @@ def classify_event_icon(icon_crop: np.ndarray) -> str:
         "red_card": int(np.count_nonzero(red)),
     }
     best = max(counts, key=counts.get)
-    total_pixels = icon_crop.shape[0] * icon_crop.shape[1]
     if counts[best] < MIN_ICON_PIXEL_FRACTION * total_pixels:
         return "unknown"
     return best
