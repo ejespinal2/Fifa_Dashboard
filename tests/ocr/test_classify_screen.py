@@ -85,3 +85,32 @@ def test_shrink_downscales_wide_crops_for_cheap_classification():
 
     narrow = np.zeros((400, 500, 3), dtype=np.uint8)
     assert _shrink(narrow).shape == narrow.shape  # already under the cap -- untouched
+
+
+@pytest.mark.skipif(cv2 is None, reason="cv2 not installed")
+def test_team_screen_body_band_is_not_downscaled(monkeypatch):
+    """Regression test: downscaling the body band before OCR (once shipped
+    for speed) silently broke Events-tab detection -- the minute is small
+    text in a small circle, and halving its resolution pushed it below
+    EasyOCR's detection floor, so every event row fell through to
+    'unsupported'. Team screens are only a handful per match (the 40-image
+    cost was from player screens), so there's no reason to downscale this
+    one -- confirm classify_screenshot passes read_lines the FULL-size body
+    crop, not a shrunk one."""
+    from fifa_analytics.ocr import classify_screen
+
+    monkeypatch.setattr(classify_screen, "read_text", lambda crop: ("TEAM 1 : 0 TEAM", 0.9))
+    seen_shapes = []
+
+    def fake_read_lines(crop):
+        seen_shapes.append(crop.shape)
+        return [{"text": "65' B. Fernandes", "confidence": 0.9, "y_top": 0.1, "y_bottom": 0.15}]
+
+    monkeypatch.setattr(classify_screen, "read_lines", fake_read_lines)
+    image = np.zeros((1125, 2000, 3), dtype=np.uint8)  # a real capture's resolution
+
+    result = classify_screen.classify_screenshot(image)
+
+    assert result == "team_events"
+    expected_body_width = int(2000 * (classify_screen.BODY_BAND[2] - classify_screen.BODY_BAND[0]))
+    assert seen_shapes[0][1] == expected_body_width  # NOT capped to MAX_CLASSIFY_WIDTH

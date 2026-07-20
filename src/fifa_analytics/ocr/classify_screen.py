@@ -7,15 +7,20 @@ every unrenamed file, so it must not cost a full-screenshot OCR pass (in a
 real 40-image run that was most of the wall-clock). Probes, cheapest
 first:
 
-1. Header strip (small crop): only the Player Performance screen says
-   "PLAYER" up there — team screens show "TEAM 1 : 0 TEAM" instead.
+1. Header strip (small crop, DOWNSCALED — "PLAYER PERFORMANCE" vs.
+   "TEAM 1 : 0 TEAM" is large text, robust to downscaling): only the
+   Player Performance screen says "PLAYER" up there.
 2. Player screens: a tiny probe where the Goalkeeping tab prints
    "Goalkeeper Rating: X.X" splits player_gk from player_summary — no
    body OCR at all.
-3. Team screens only (a handful per match): the body band, DOWNSCALED
-   (word presence doesn't need full resolution) — stat labels mean the
-   Summary tab, minute-spine rows mean the Events tab, the Threat
-   timeline means the unsupported Possession tab.
+3. Team screens only (a handful per match — this is NOT where the
+   40-image cost was): the body band at FULL resolution. Do not downscale
+   this one: the Events tab's minute is small text in a small circle
+   already, and shrinking it further can push it below EasyOCR's
+   detection floor, silently losing every event row to "unsupported"
+   (confirmed against a real run). Stat labels mean the Summary tab,
+   minute-spine rows mean the Events tab, the Threat timeline means the
+   unsupported Possession tab.
 
 decide_player_screen/decide_team_screen are pure so the logic is testable
 without OCR. Reserved filenames always win over auto-classification (see
@@ -96,6 +101,6 @@ def classify_screenshot(image) -> str:
         probe_text, _ = read_text(clean_for_ocr(probe_crop))
         return decide_player_screen(probe_text)
 
-    body_crop = crop_fractional(image, BODY_BAND)
-    body_lines = [line["text"] for line in read_lines(clean_for_ocr(_shrink(body_crop)))]
+    body_crop = crop_fractional(image, BODY_BAND)  # full resolution -- see module docstring
+    body_lines = [line["text"] for line in read_lines(clean_for_ocr(body_crop))]
     return decide_team_screen(body_lines)
