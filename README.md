@@ -385,9 +385,11 @@ snapshot, never hand-edited data like your players/matches).
   the header order), so the side a name sits on IS its team. Every row
   becomes a structured `match_events` entry with its icon classified from
   that side's icon zone at the row's own height: `goal` (white ball),
-  `missed_penalty` (ball with an X — all white in the real UI, so it's
-  shape-discriminated from a goal by the white blob's width, plus a
-  red-X color variant), `yellow_card`/`red_card` (EA's color-coding —
+  `missed_penalty` (ball with an ✗) and `penalty_goal` (ball with a ✓ —
+  a converted penalty): both are all white in the real UI, so a wide
+  white blob marks a penalty icon and the glyph's top corners tell ✗
+  (both filled) from ✓ (top-left empty); a red-X color variant also
+  reads as missed, `yellow_card`/`red_card` (EA's color-coding —
   still unverified against a real card capture), and substitutions, which
   store TWO events: `sub_on` (the entering player, named at the minute)
   and `sub_off` (the outgoing player, from the hanging line below). 'HT'

@@ -99,3 +99,34 @@ def test_classify_missed_penalty_white_x_variant_by_shape():
         crop[6 + i, 6 + i] = (235, 235, 235)
         crop[6 + i, 17 - i] = (235, 235, 235)
     assert classify_event_icon(crop) == "missed_penalty"
+
+
+def _ball_with_glyph(draw_glyph):
+    """Dark crop with a white ball on the right and a white glyph drawn by
+    draw_glyph(crop, x0, x1, y0, y1) on the left -- the penalty icon shape."""
+    import cv2 as _cv2
+    crop = np.full((28, 52, 3), (20, 15, 10), dtype=np.uint8)
+    _cv2.circle(crop, (38, 14), 9, (235, 235, 235), -1)   # the ball
+    draw_glyph(crop, 6, 24, 5, 23)
+    return crop
+
+
+def test_classify_penalty_missed_white_x():
+    import cv2 as _cv2
+
+    def draw_x(crop, x0, x1, y0, y1):
+        _cv2.line(crop, (x0, y0), (x1, y1), (235, 235, 235), 3)
+        _cv2.line(crop, (x0, y1), (x1, y0), (235, 235, 235), 3)
+
+    assert classify_event_icon(_ball_with_glyph(draw_x)) == "missed_penalty"
+
+
+def test_classify_penalty_converted_white_check():
+    import cv2 as _cv2
+
+    def draw_check(crop, x0, x1, y0, y1):
+        vertex_x = x0 + (x1 - x0) // 3
+        _cv2.line(crop, (x0, (y0 + y1) // 2), (vertex_x, y1), (235, 235, 235), 3)
+        _cv2.line(crop, (vertex_x, y1), (x1, y0), (235, 235, 235), 3)
+
+    assert classify_event_icon(_ball_with_glyph(draw_check)) == "penalty_goal"

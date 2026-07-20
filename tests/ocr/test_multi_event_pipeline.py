@@ -33,12 +33,13 @@ BAND = regions.TEAM_EVENTS_REGIONS["event_band"]
 # (kind, side, minute, band y-range) — mirrors the real screenshots:
 # away goal, home yellow, away missed pen (white ball + X), away sub
 ROWS = [
-    ("goal", "away", 41, 0.08, 0.13),
-    ("yellow_card", "home", 52, 0.28, 0.33),
-    ("missed_penalty", "away", 75, 0.48, 0.53),
-    ("substitution", "away", 65, 0.68, 0.73),
+    ("goal", "away", 41, 0.06, 0.11),
+    ("yellow_card", "home", 52, 0.22, 0.27),
+    ("missed_penalty", "away", 75, 0.38, 0.43),
+    ("penalty_goal", "home", 58, 0.54, 0.59),
+    ("substitution", "away", 65, 0.70, 0.75),
 ]
-SUB_OFF_LINE = (0.745, 0.775)  # hanging outgoing-name line below the sub row
+SUB_OFF_LINE = (0.765, 0.795)  # hanging outgoing-name line below the sub row
 
 
 def _band_to_image_y(y_frac):
@@ -63,6 +64,13 @@ def _synthetic_events_image(path):
             x_left = center[0] - 2 * radius
             cv2.line(image, (x_left - radius, center[1] - radius), (x_left + radius, center[1] + radius), (235, 235, 235), 4)
             cv2.line(image, (x_left - radius, center[1] + radius), (x_left + radius, center[1] - radius), (235, 235, 235), 4)
+        elif kind == "penalty_goal":
+            # white ball with a check beside it: long arm to the top-right
+            cv2.circle(image, (center[0] + radius, center[1]), radius, (235, 235, 235), -1)
+            x_left = center[0] - 2 * radius
+            vertex = (x_left - radius // 2, center[1] + radius)
+            cv2.line(image, (x_left - radius, center[1]), vertex, (235, 235, 235), 4)
+            cv2.line(image, vertex, (x_left + radius, center[1] - radius), (235, 235, 235), 4)
         elif kind == "substitution":
             mid = center[0]
             cv2.rectangle(image, (x0 + 2, row_y0), (mid - 2, row_y1), (0, 200, 0), -1)
@@ -79,7 +87,7 @@ def _fake_read_fragments(crop):
     for kind, side, minute, y_top, y_bottom in ROWS:
         out.append(fragment(f"{minute}'", 0.485, 0.515, y_top, y_bottom))
         name = {"goal": "Benjamin Sesko", "yellow_card": "Koke", "missed_penalty": "Bruno Fernandes",
-                "substitution": "Kobbie Mainoo"}[kind]
+                "penalty_goal": "Julian Alvarez", "substitution": "Kobbie Mainoo"}[kind]
         x = (0.62, 0.75) if side == "away" else (0.30, 0.43)
         out.append(fragment(name, x[0], x[1], y_top, y_bottom))
     out.append(fragment("Marcus Rashford", 0.56, 0.68, *SUB_OFF_LINE))
@@ -94,6 +102,7 @@ def db(tmp_path):
     home = get_or_create_team(conn, "Atletico de Madrid")
     away = get_or_create_team(conn, "Manchester United")
     upsert_player(conn, "Koke", "CM", 82, "test", team_id=home)
+    upsert_player(conn, "Julian Alvarez", "ST", 89, "test", team_id=home)
     for name in ("Benjamin Sesko", "Bruno Fernandes", "Kobbie Mainoo", "Marcus Rashford"):
         upsert_player(conn, name, "ST", 84, "test", team_id=away)
     season = get_or_create_season(conn, "2025-26")
@@ -116,7 +125,8 @@ def test_full_layout_types_sides_and_sub_pair(db, tmp_path, monkeypatch):
     _, stored = _process(conn, match, home, away, image_path, monkeypatch)
 
     by_type = {e["event_type"]: e for e in stored}
-    assert set(by_type) == {"goal", "yellow_card", "missed_penalty", "sub_on", "sub_off"}
+    assert set(by_type) == {"goal", "yellow_card", "missed_penalty", "penalty_goal", "sub_on", "sub_off"}
+    assert by_type["penalty_goal"]["minute"] == 58 and by_type["penalty_goal"]["team_id"] == home
     assert by_type["goal"]["minute"] == 41 and by_type["goal"]["team_id"] == away
     assert by_type["yellow_card"]["team_id"] == home  # side attribution
     assert by_type["missed_penalty"]["minute"] == 75
@@ -133,7 +143,7 @@ def test_overlapping_scrolled_screenshot_dedupes(db, tmp_path, monkeypatch):
     _, stored_1 = _process(conn, match, home, away, first, monkeypatch)
     _, stored_2 = _process(conn, match, home, away, second, monkeypatch)
 
-    assert len(stored_1) == 5
+    assert len(stored_1) == 6
     assert stored_2 == []
     count = conn.execute("SELECT COUNT(*) FROM match_events WHERE match_id = ?", (match,)).fetchone()[0]
-    assert count == 5
+    assert count == 6

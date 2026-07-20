@@ -206,15 +206,16 @@ def classify_event_icon(icon_crop: np.ndarray) -> str:
     if counts[best] < threshold:
         return "unknown"
     if best == "goal" and _white_blob_is_wide(white):
-        # Missed penalty, white-X variant (the real screenshots' form): the
-        # X glyph sits beside the ball, so the white blob is clearly wider
-        # than tall — a plain goal ball is round.
-        return "missed_penalty"
+        # A penalty icon: the ball with a glyph beside it (all white in the
+        # real UI), making the blob clearly wider than a round goal ball.
+        # ✗ = missed penalty, ✓ = converted penalty — told apart by the
+        # glyph's top corners.
+        return _classify_penalty_glyph(white)
     return best
 
 
-# A goal ball's white bounding box is ~square; the ball+X missed-penalty
-# glyph measures ~1.5-2x wider. Split the difference.
+# A goal ball's white bounding box is ~square; the ball+glyph penalty icons
+# measure ~1.5-2x wider. Split the difference.
 MISSED_PEN_MIN_ASPECT = 1.3
 
 
@@ -225,3 +226,36 @@ def _white_blob_is_wide(white_mask: np.ndarray) -> bool:
     width = xs.max() - xs.min() + 1
     height = ys.max() - ys.min() + 1
     return height > 0 and (width / height) >= MISSED_PEN_MIN_ASPECT
+
+
+def _classify_penalty_glyph(white_mask: np.ndarray) -> str:
+    """The wide white blob is ball + glyph. The ball is the densest
+    ~square window of columns; the glyph is what's left beside it. An ✗
+    (missed penalty) fills BOTH top corners of its own box — a ✓
+    (converted penalty) leaves the top-left empty, its long arm rising to
+    the top-right. Ambiguous shapes default to missed_penalty (the variant
+    confirmed against a real screenshot)."""
+    ys, xs = np.nonzero(white_mask)
+    box = white_mask[ys.min(): ys.max() + 1, xs.min(): xs.max() + 1]
+    height, width = box.shape
+    window = max(1, min(height, width - 1))
+
+    column_sums = box.sum(axis=0)
+    best_start = max(
+        range(width - window + 1),
+        key=lambda s: int(column_sums[s: s + window].sum()),
+    )
+    left_part = box[:, :best_start]
+    right_part = box[:, best_start + window:]
+    glyph = left_part if left_part.shape[1] >= right_part.shape[1] else right_part
+    gys, gxs = np.nonzero(glyph)
+    if len(gxs) == 0:
+        return "missed_penalty"
+    glyph = glyph[gys.min(): gys.max() + 1, gxs.min(): gxs.max() + 1]
+
+    mid_y, mid_x = glyph.shape[0] // 2, glyph.shape[1] // 2
+    top_left = int(np.count_nonzero(glyph[:mid_y, :mid_x]))
+    top_right = int(np.count_nonzero(glyph[:mid_y, mid_x:]))
+    if top_right > 0 and top_left <= 0.4 * top_right:
+        return "penalty_goal"
+    return "missed_penalty"

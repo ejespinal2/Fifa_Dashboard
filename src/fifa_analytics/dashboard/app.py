@@ -493,7 +493,7 @@ def schedule_tab(conn, team_id: int, db_path: str) -> None:
     st.markdown(f"**{score}**" + (f"  ·  {fixture['competition']}" if fixture["competition"] else "")
                 + (f"  ·  {fixture['date']}" if fixture["date"] else ""))
 
-    event_icons = {"goal": "⚽", "missed_penalty": "❌⚽", "yellow_card": "🟨",
+    event_icons = {"goal": "⚽", "missed_penalty": "❌⚽", "penalty_goal": "✅⚽", "yellow_card": "🟨",
                    "red_card": "🟥", "sub_on": "🔺", "sub_off": "🔻",
                    "substitution": "🔁", "unknown": "❔"}
     events = queries.match_events_list(conn, fixture["match_id"])
