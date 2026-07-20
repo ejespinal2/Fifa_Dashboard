@@ -140,9 +140,12 @@ TEAM_EVENTS_REGIONS = {
     "event_icon": (0.44, 0.34, 0.485, 0.41),
 }
 
-# x-range of the column the goal/card/sub icons sit in, one per event row —
-# multi-row parsing pairs this column with each OCR'd row's own vertical
-# band to find that row's icon. Derived from event_icon above (the single
-# verified sample); if a busy multi-event page lays rows out differently,
-# calibrate against it and adjust here.
-TEAM_EVENTS_ICON_COLUMN = (0.44, 0.485)
+# The Events tab's icons sit between the center spine and each side's face
+# photo — one narrow x-band per team side. Measured from real multi-event
+# screenshots (Atlético 0:2 Man Utd, 2000x1125): home-side icons (sub
+# arrows) at x 918-938px, away-side icons (ball, ball+X, arrows) at
+# x 1058-1092px. Bands are padded a little each way.
+TEAM_EVENTS_ICON_ZONES = {
+    "home": (0.448, 0.492),
+    "away": (0.523, 0.558),
+}

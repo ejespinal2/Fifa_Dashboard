@@ -363,25 +363,23 @@ snapshot, never hand-edited data like your players/matches).
 
 ## Known gaps going into real use
 
-- **Team Events: any number of events per screenshot, any number of
-  screenshots per match — but row layout is calibrated from one sample.**
-  The event band is OCR'd line by line; every line that parses as
-  "player minute" becomes a structured `match_events` row, with that row's
-  icon classified from the icon column at the row's own height: `goal`
-  (achromatic ball — confirmed against a real screenshot), `yellow_card` /
-  `red_card` (EA's standard color-coding — plausible, unverified against a
-  real card event), `substitution` (green+red arrow pair; checked FIRST
-  since its red pixels would otherwise win as a red card), or
-  `missed_penalty` (the ball with a red X — dominant white plus a
-  thinner-but-real amount of red). If the list
-  needs scrolling, capture it in sections as `team_events.png`,
-  `team_events_2.png`, ... — overlapping rows dedupe on (player, minute,
-  type). Raw text is always kept per capture regardless. CAVEAT: the icon
-  column's x-position (`regions.TEAM_EVENTS_ICON_COLUMN`) derives from the
-  single verified single-event sample; if a busy multi-event page lays
-  rows out differently, run `ocr/calibrate.py` against one and adjust —
-  the multi-row mechanics are covered by synthetic-image tests, but a real
-  busy events page hasn't been through it yet.
+- **Team Events: any number of events, any number of scrolled screenshots,
+  layout calibrated against real multi-event captures.** The Events tab
+  lays events out on a center spine — minute circles in the middle, the
+  HOME team's events extending left and the AWAY team's right (matching
+  the header order), so the side a name sits on IS its team. Every row
+  becomes a structured `match_events` entry with its icon classified from
+  that side's icon zone at the row's own height: `goal` (white ball),
+  `missed_penalty` (ball with an X — all white in the real UI, so it's
+  shape-discriminated from a goal by the white blob's width, plus a
+  red-X color variant), `yellow_card`/`red_card` (EA's color-coding —
+  still unverified against a real card capture), and substitutions, which
+  store TWO events: `sub_on` (the entering player, named at the minute)
+  and `sub_off` (the outgoing player, from the hanging line below). 'HT'
+  markers and scroll arrows are skipped. Capture a long list in scrolled
+  sections (`team_events.png`, `team_events_2.png`, ... or unrenamed —
+  auto-classification catches them); overlapping rows dedupe on (player,
+  minute, type). Raw text is always kept per capture regardless.
 - **No xA (expected assists) field exists on any captured screen** — if
   expected-assist over/underperformance matters to the model, it isn't coming from
   OCR and would need another source or to be dropped.

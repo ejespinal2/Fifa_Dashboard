@@ -87,3 +87,15 @@ def test_plain_white_ball_still_goal_not_missed_penalty():
     crop = np.full((20, 20, 3), (20, 15, 10), dtype=np.uint8)
     crop[4:16, 4:16] = (235, 235, 235)
     assert classify_event_icon(crop) == "goal"
+
+
+def test_classify_missed_penalty_white_x_variant_by_shape():
+    # The real screenshots' missed-pen icon is ALL white (ball + X glyph
+    # beside it) -- color can't separate it from a goal ball, the wide
+    # white blob can.
+    crop = np.full((24, 44, 3), (20, 15, 10), dtype=np.uint8)
+    crop[6:18, 26:38] = (235, 235, 235)      # the ball
+    for i in range(12):                       # the X beside it
+        crop[6 + i, 6 + i] = (235, 235, 235)
+        crop[6 + i, 17 - i] = (235, 235, 235)
+    assert classify_event_icon(crop) == "missed_penalty"

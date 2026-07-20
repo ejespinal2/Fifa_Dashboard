@@ -60,30 +60,35 @@ def group_fragments_into_lines(fragments: list[dict]) -> list[dict]:
     return out
 
 
+def read_fragments(crop: np.ndarray) -> list[dict]:
+    """OCR a crop and return every raw text fragment with its position,
+    all coordinates as fractions of the crop's size:
+    [{text, confidence, x_left, x_right, y_top, y_bottom}]. This is the
+    input for layout-aware parsing (e.g. the Events tab's center-spine
+    rows, where WHERE a fragment sits decides which team it belongs to)."""
+    if crop is None or crop.size == 0:
+        return []
+    results = _reader().readtext(crop, detail=1, paragraph=False)
+    height, width = crop.shape[0], crop.shape[1]
+    return [
+        {
+            "text": text,
+            "confidence": confidence,
+            "x_left": min(point[0] for point in box) / width,
+            "x_right": max(point[0] for point in box) / width,
+            "y_top": min(point[1] for point in box) / height,
+            "y_bottom": max(point[1] for point in box) / height,
+        }
+        for box, text, confidence in results
+    ]
+
+
 def read_lines(crop: np.ndarray) -> list[dict]:
     """OCR a crop and return its visual lines top-to-bottom:
     [{text, confidence, y_top, y_bottom}] with y as fractions of the crop
     height — so callers can map a line back to a vertical slice of the
     source image (e.g. to find the icon that belongs to an event row)."""
-    if crop is None or crop.size == 0:
-        return []
-    results = _reader().readtext(crop, detail=1, paragraph=False)
-    fragments = [
-        {
-            "text": text,
-            "confidence": confidence,
-            "y_top": min(point[1] for point in box),
-            "y_bottom": max(point[1] for point in box),
-            "x_left": min(point[0] for point in box),
-        }
-        for box, text, confidence in results
-    ]
-    height = crop.shape[0]
-    lines = group_fragments_into_lines(fragments)
-    for line in lines:
-        line["y_top"] = line["y_top"] / height
-        line["y_bottom"] = line["y_bottom"] / height
-    return lines
+    return group_fragments_into_lines(read_fragments(crop))
 
 
 def parse_numeric(raw_text: str) -> float | None:

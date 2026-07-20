@@ -1,9 +1,10 @@
-"""Integration test for multi-event team_events processing: a synthetic
-events screenshot with three rows (goal / yellow card / substitution),
-icons drawn at each row's height in the real icon column. OCR text is
-stubbed (EasyOCR's accuracy is its own concern); everything else — line
-loop, roster matching, per-row icon geometry + color classification,
-cross-screenshot dedupe — runs for real on real pixels."""
+"""Integration test for Events-tab processing against synthetic screenshots
+built to the REAL layout (calibrated from the Atlético 0:2 Man Utd
+captures): minute circles on a center spine, home events left / away
+events right, icons in the per-side zones, hanging outgoing-sub names.
+OCR text is stubbed (EasyOCR's accuracy is its own concern); geometry,
+icon color/shape classification, side->team attribution, roster matching,
+and cross-screenshot dedupe all run for real on real pixels."""
 
 import numpy as np
 import pytest
@@ -26,43 +27,63 @@ from fifa_analytics.ocr import pipeline, regions
 
 pytestmark = pytest.mark.skipif(cv2 is None, reason="cv2 not installed")
 
-WIDTH, HEIGHT = 1920, 1080
+WIDTH, HEIGHT = 2000, 1125
 BAND = regions.TEAM_EVENTS_REGIONS["event_band"]
-ICON_X0, ICON_X1 = regions.TEAM_EVENTS_ICON_COLUMN
 
-# three event rows at these fractions of the band's height
+# (kind, side, minute, band y-range) — mirrors the real screenshots:
+# away goal, home yellow, away missed pen (white ball + X), away sub
 ROWS = [
-    ("Bruno Fernandes 37", 0.10, 0.16, "goal"),
-    ("Casemiro 55", 0.40, 0.46, "yellow_card"),
-    ("Kobbie Mainoo 60", 0.70, 0.76, "substitution"),
+    ("goal", "away", 41, 0.08, 0.13),
+    ("yellow_card", "home", 52, 0.28, 0.33),
+    ("missed_penalty", "away", 75, 0.48, 0.53),
+    ("substitution", "away", 65, 0.68, 0.73),
 ]
+SUB_OFF_LINE = (0.745, 0.775)  # hanging outgoing-name line below the sub row
+
+
+def _band_to_image_y(y_frac):
+    return int((BAND[1] + y_frac * (BAND[3] - BAND[1])) * HEIGHT)
 
 
 def _synthetic_events_image(path):
-    image = np.full((HEIGHT, WIDTH, 3), (25, 18, 12), dtype=np.uint8)  # dark panel
-    band_y0, band_y1 = BAND[1] * HEIGHT, BAND[3] * HEIGHT
-    icon_x0, icon_x1 = int(ICON_X0 * WIDTH), int(ICON_X1 * WIDTH)
-    for _, y_top, y_bottom, kind in ROWS:
-        row_y0 = int(band_y0 + y_top * (band_y1 - band_y0))
-        row_y1 = int(band_y0 + y_bottom * (band_y1 - band_y0))
-        pad_x = (icon_x1 - icon_x0) // 4
+    image = np.full((HEIGHT, WIDTH, 3), (25, 18, 12), dtype=np.uint8)
+    for kind, side, _, y_top, y_bottom in ROWS:
+        zone_x0, zone_x1 = regions.TEAM_EVENTS_ICON_ZONES[side]
+        x0, x1 = int(zone_x0 * WIDTH), int(zone_x1 * WIDTH)
+        row_y0, row_y1 = _band_to_image_y(y_top), _band_to_image_y(y_bottom)
+        center = ((x0 + x1) // 2, (row_y0 + row_y1) // 2)
+        radius = (row_y1 - row_y0) // 3
         if kind == "goal":
-            cv2.circle(image, ((icon_x0 + icon_x1) // 2, (row_y0 + row_y1) // 2),
-                       (row_y1 - row_y0) // 3, (235, 235, 235), -1)
+            cv2.circle(image, center, radius, (235, 235, 235), -1)
         elif kind == "yellow_card":
-            cv2.rectangle(image, (icon_x0 + pad_x, row_y0), (icon_x1 - pad_x, row_y1), (0, 220, 255), -1)
+            cv2.rectangle(image, (center[0] - radius // 2, row_y0), (center[0] + radius // 2, row_y1), (0, 220, 255), -1)
+        elif kind == "missed_penalty":
+            # white ball with an X glyph beside it -> one wide white blob
+            cv2.circle(image, (center[0] + radius, center[1]), radius, (235, 235, 235), -1)
+            x_left = center[0] - 2 * radius
+            cv2.line(image, (x_left - radius, center[1] - radius), (x_left + radius, center[1] + radius), (235, 235, 235), 4)
+            cv2.line(image, (x_left - radius, center[1] + radius), (x_left + radius, center[1] - radius), (235, 235, 235), 4)
         elif kind == "substitution":
-            mid_x = (icon_x0 + icon_x1) // 2
-            cv2.rectangle(image, (icon_x0 + 2, row_y0), (mid_x - 2, row_y1), (0, 200, 0), -1)
-            cv2.rectangle(image, (mid_x + 2, row_y0), (icon_x1 - 2, row_y1), (0, 0, 220), -1)
+            mid = center[0]
+            cv2.rectangle(image, (x0 + 2, row_y0), (mid - 2, row_y1), (0, 200, 0), -1)
+            cv2.rectangle(image, (mid + 2, row_y0), (x1 - 2, row_y1), (0, 0, 220), -1)
     cv2.imwrite(str(path), image)
 
 
-def _fake_read_lines(crop):
-    return [
-        {"text": text, "confidence": 0.95, "y_top": y_top, "y_bottom": y_bottom}
-        for text, y_top, y_bottom, _ in ROWS
-    ]
+def _fake_read_fragments(crop):
+    def fragment(text, x_left, x_right, y_top, y_bottom):
+        return {"text": text, "confidence": 0.95,
+                "x_left": x_left, "x_right": x_right, "y_top": y_top, "y_bottom": y_bottom}
+
+    out = []
+    for kind, side, minute, y_top, y_bottom in ROWS:
+        out.append(fragment(f"{minute}'", 0.485, 0.515, y_top, y_bottom))
+        name = {"goal": "Benjamin Sesko", "yellow_card": "Koke", "missed_penalty": "Bruno Fernandes",
+                "substitution": "Kobbie Mainoo"}[kind]
+        x = (0.62, 0.75) if side == "away" else (0.30, 0.43)
+        out.append(fragment(name, x[0], x[1], y_top, y_bottom))
+    out.append(fragment("Marcus Rashford", 0.56, 0.68, *SUB_OFF_LINE))
+    return out
 
 
 @pytest.fixture
@@ -70,61 +91,49 @@ def db(tmp_path):
     path = str(tmp_path / "t.db")
     init_db(path)
     conn = connect(path)
-    us = get_or_create_team(conn, "Manchester United")
-    them = get_or_create_team(conn, "Bayer 04 Leverkusen")
-    upsert_player(conn, "Bruno Fernandes", "CAM", 87, "test", team_id=us)
-    upsert_player(conn, "Casemiro", "CDM", 80, "test", team_id=us)
-    upsert_player(conn, "Kobbie Mainoo", "CM", 78, "test", team_id=us)
+    home = get_or_create_team(conn, "Atletico de Madrid")
+    away = get_or_create_team(conn, "Manchester United")
+    upsert_player(conn, "Koke", "CM", 82, "test", team_id=home)
+    for name in ("Benjamin Sesko", "Bruno Fernandes", "Kobbie Mainoo", "Marcus Rashford"):
+        upsert_player(conn, name, "ST", 84, "test", team_id=away)
     season = get_or_create_season(conn, "2025-26")
-    match = create_match(conn, season, 1, us, them, "dir")
-    yield conn, match, us, them
+    match = create_match(conn, season, 1, home, away, "dir")
+    yield conn, match, home, away
     conn.close()
 
 
-def test_three_rows_parse_with_correct_types_and_minutes(db, tmp_path, monkeypatch):
-    conn, match, us, _ = db
+def _process(conn, match, home, away, image_path, monkeypatch):
+    monkeypatch.setattr(pipeline, "read_fragments", _fake_read_fragments)
+    candidates = players_for_teams(conn, [home, away])
+    return pipeline.process_team_events(conn, match, str(image_path), home, away, candidates)
+
+
+def test_full_layout_types_sides_and_sub_pair(db, tmp_path, monkeypatch):
+    conn, match, home, away = db
     image_path = tmp_path / "team_events.png"
     _synthetic_events_image(image_path)
-    monkeypatch.setattr(pipeline, "read_lines", _fake_read_lines)
 
-    candidates = players_for_teams(conn, [us])
-    _, stored = pipeline.process_team_events(conn, match, str(image_path), candidates)
+    _, stored = _process(conn, match, home, away, image_path, monkeypatch)
 
-    assert [(e["minute"], e["event_type"]) for e in stored] == [
-        (37, "goal"), (55, "yellow_card"), (60, "substitution"),
-    ]
-    assert all(e["team_id"] == us for e in stored)
+    by_type = {e["event_type"]: e for e in stored}
+    assert set(by_type) == {"goal", "yellow_card", "missed_penalty", "sub_on", "sub_off"}
+    assert by_type["goal"]["minute"] == 41 and by_type["goal"]["team_id"] == away
+    assert by_type["yellow_card"]["team_id"] == home  # side attribution
+    assert by_type["missed_penalty"]["minute"] == 75
+    assert by_type["sub_on"]["minute"] == 65 and by_type["sub_off"]["minute"] == 65
+    assert by_type["sub_on"]["team_id"] == away and by_type["sub_off"]["team_id"] == away
 
 
 def test_overlapping_scrolled_screenshot_dedupes(db, tmp_path, monkeypatch):
-    conn, match, us, _ = db
-    first = tmp_path / "team_events.png"
-    second = tmp_path / "team_events_2.png"
+    conn, match, home, away = db
+    first, second = tmp_path / "team_events.png", tmp_path / "team_events_2.png"
     _synthetic_events_image(first)
-    _synthetic_events_image(second)  # identical = full overlap
-    monkeypatch.setattr(pipeline, "read_lines", _fake_read_lines)
+    _synthetic_events_image(second)
 
-    candidates = players_for_teams(conn, [us])
-    _, stored_1 = pipeline.process_team_events(conn, match, str(first), candidates)
-    _, stored_2 = pipeline.process_team_events(conn, match, str(second), candidates)
+    _, stored_1 = _process(conn, match, home, away, first, monkeypatch)
+    _, stored_2 = _process(conn, match, home, away, second, monkeypatch)
 
-    assert len(stored_1) == 3
-    assert stored_2 == []  # every row already known
+    assert len(stored_1) == 5
+    assert stored_2 == []
     count = conn.execute("SELECT COUNT(*) FROM match_events WHERE match_id = ?", (match,)).fetchone()[0]
-    assert count == 3
-
-
-def test_unparseable_and_unmatched_rows_are_skipped(db, tmp_path, monkeypatch):
-    conn, match, us, _ = db
-    image_path = tmp_path / "team_events.png"
-    _synthetic_events_image(image_path)
-    monkeypatch.setattr(pipeline, "read_lines", lambda crop: [
-        {"text": "Events", "confidence": 0.9, "y_top": 0.0, "y_bottom": 0.05},          # header, no minute
-        {"text": "Bruno Fernandes 37", "confidence": 0.9, "y_top": 0.10, "y_bottom": 0.16},
-        {"text": "Nobody Nowhere 88", "confidence": 0.9, "y_top": 0.40, "y_bottom": 0.46},  # not on a roster
-    ])
-
-    candidates = players_for_teams(conn, [us])
-    _, stored = pipeline.process_team_events(conn, match, str(image_path), candidates)
-    assert len(stored) == 1
-    assert stored[0]["minute"] == 37
+    assert count == 5

@@ -20,7 +20,7 @@ auto-classification (see pipeline.run_match_dir) — if a screen ever
 misclassifies, naming the file is the override.
 """
 
-from fifa_analytics.ocr.event_parse import parse_event_text
+from fifa_analytics.ocr.event_parse import parse_minute
 from fifa_analytics.ocr.extract import read_lines, read_text
 from fifa_analytics.ocr.preprocess import clean_for_ocr, crop_fractional
 
@@ -47,8 +47,18 @@ def decide(header_text: str, body_lines: list[str]) -> str:
     if label_hits >= 2:
         return "team_summary"
 
-    event_rows = sum(1 for line in body_lines if parse_event_text(line) != (None, None))
-    if event_rows >= 1:
+    # Events-tab rows carry a minute token ("65'", "45+2'") somewhere in the
+    # line (the spine layout puts it mid-line between the two teams' names),
+    # alongside at least one name-like word.
+    def is_event_row(line: str) -> bool:
+        tokens = line.split()
+        if len(tokens) < 2:  # a lone number (a score, a page dot) isn't a row
+            return False
+        has_minute = any(parse_minute(token) is not None for token in tokens)
+        has_name = any(any(ch.isalpha() for ch in token) for token in tokens)
+        return has_minute and has_name
+
+    if sum(1 for line in body_lines if is_event_row(line)) >= 1:
         return "team_events"
     return "unsupported"
 

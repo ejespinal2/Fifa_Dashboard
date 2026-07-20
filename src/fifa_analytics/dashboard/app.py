@@ -494,7 +494,8 @@ def schedule_tab(conn, team_id: int, db_path: str) -> None:
                 + (f"  ·  {fixture['date']}" if fixture["date"] else ""))
 
     event_icons = {"goal": "⚽", "missed_penalty": "❌⚽", "yellow_card": "🟨",
-                   "red_card": "🟥", "substitution": "🔁", "unknown": "❔"}
+                   "red_card": "🟥", "sub_on": "🔺", "sub_off": "🔻",
+                   "substitution": "🔁", "unknown": "❔"}
     events = queries.match_events_list(conn, fixture["match_id"])
     if events:
         st.dataframe(

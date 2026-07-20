@@ -24,3 +24,9 @@ def test_player_minute_rows_mean_team_events():
 
 def test_garbage_is_unsupported_not_misrouted():
     assert decide("MAN UTD 1 : 0 LEVERKUSEN", ["random words", "no structure"]) == "unsupported"
+
+
+def test_spine_layout_event_rows_classify_as_events():
+    # real Events-tab lines: minute mid-line, names either side
+    lines = ["J. Cardoso 65' P. Dorgu", "65' D. Spence", "HT"]
+    assert decide("ATLETICO DE MADRID 0 : 2 MAN UTD", lines) == "team_events"
