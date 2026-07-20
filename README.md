@@ -84,14 +84,33 @@ Read-only Streamlit views over everything Phases 1-4 compute, one tab each
   competition and venue, record results, and see your W/D/L record overall
   and per competition (points, GF/GA). Each fixture carries a screenshot
   folder — drop that day's images there and click *Process screenshots* to
-  run the OCR pipeline on them from inside the dashboard (the EasyOCR model
-  loads on first click, so that one takes a while), then review in
+  run the OCR pipeline on them from inside the dashboard, then review in
   `validate_app.py` and click *Recompute model + xPTS*. Selecting a fixture
   shows its **match facts**: the score line, the parsed event timeline
-  (⚽ goals, ❌⚽ missed penalties, 🟨/🟥 cards, 🔁 subs, minute by minute,
-  player and team named), and the team-summary stats side by side.
-  Fat-fingered fixtures can be deleted along with anything attached to
-  them.
+  (⚽ goals, ✅⚽/❌⚽ converted/missed penalties, 🟨/🟥 cards, 🔺/🔻 subs on/off,
+  minute by minute, player and team named), and the team-summary stats
+  side by side. Fat-fingered fixtures can be deleted along with anything
+  attached to them.
+- **How long OCR takes, and what NOT to do while it runs.** Figure roughly
+  half a minute per player screenshot on a typical laptop CPU (each one is
+  ~20 separate OCR reads, not one) — a full match's ~40 images is realistically
+  10-25 minutes, plus a one-time minute or two on the very first run ever
+  (EasyOCR downloads its model). Progress prints to the terminal you
+  launched Streamlit from: `[player_summary 7/22] SHARE_...jpeg: exact
+  (14.2s)`. **Do not click Process screenshots again while it's running** —
+  the button doesn't visibly disable during the long blocking call, so a
+  second click (or a page reload after the browser's connection times out
+  on a long request) looks like the only way to unstick it, but it actually
+  starts a full second pass in parallel: double every OCR call, and two
+  writers racing the same database. A per-fixture lock file
+  (`data/.ocr_locks/`, gitignored) now rejects a second concurrent run for
+  the same fixture with a clear message instead of silently double-running
+  — but the fix is not clicking twice, not a safety net to lean on. Two
+  things that help the real wait: a CUDA GPU is auto-detected and used if
+  present (3-5x faster; `FIFA_OCR_GPU=0` forces CPU if a detected GPU
+  misbehaves), and re-running Process after adding a couple of forgotten
+  screenshots only OCRs the new ones — everything already processed is
+  hash-skipped instantly.
 - **Screenshot filenames are optional.** Reserved names (`team_summary`,
   `team_events`, `team_events_2`…, `player_summary_*`, `player_gk_*`) are
   routed by name, exactly as always — and any *other* image in the folder
@@ -101,12 +120,15 @@ Read-only Streamlit views over everything Phases 1-4 compute, one tab each
   minute-spine rows. Unparseable screens (e.g. the Possession tab's Threat
   timeline) are skipped with a printed note. If auto-classification ever
   gets one wrong, renaming the file to a reserved name overrides it.
-- **Duplicate protection, two layers.** Every image is content-hashed per
-  match: the identical file dropped twice (or *Process screenshots*
-  clicked twice) is skipped outright. And a player who already has a
-  capture of a given type for a match is never given a second one from a
-  different screenshot — that would silently double their stats in the
-  model. Both skips print exactly what happened.
+- **Duplicate protection, three layers.** A per-fixture processing lock
+  (above) stops two concurrent `run_match_dir` runs from ever racing each
+  other. Independently, every image is content-hashed per match: the
+  identical file dropped twice under different names is skipped outright,
+  checked *before* the (much pricier) auto-classification step so a
+  duplicate download costs nothing. And a player who already has a capture
+  of a given type for a match is never given a second one from a
+  *different* screenshot — that would silently double their stats in the
+  model. All three print exactly what happened and why.
 - **Goalkeepers get their own tab.** Capture the keeper's Player
   Performance → **Goalkeeping** tab alongside their Summary tab. Its
   save stats (shots against/on target, saves, save success rate, penalty

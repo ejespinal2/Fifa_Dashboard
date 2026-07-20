@@ -2,30 +2,43 @@
 folder don't have to follow the reserved naming convention — the pipeline
 looks at each unrecognized image and decides what screen it is.
 
-Discriminators, cheapest-first:
+Built to be CHEAP: classification runs before any real processing, on
+every unrenamed file, so it must not cost a full-screenshot OCR pass (in a
+real 40-image run that was most of the wall-clock). Probes, cheapest
+first:
 
-- The Player Performance screen is the only one whose top strip says
-  "PLAYER" — team screens show "TEAM 1 : 0 TEAM" up there instead.
-- Team screens all share the same tab bar (Summary/Possession/.../Events),
-  so the ACTIVE tab can't be read as text; the body content decides:
-  * the Threat timeline ("Threat", "Overall Possession") = the Possession
-    tab — real data, but nothing this pipeline parses → unsupported,
-    skipped with a note rather than mis-ingested.
-  * several known stat labels (Possession %, Shots, ...) = team Summary.
-  * rows parsing as "player minute" = the Events tab.
+1. Header strip (small crop): only the Player Performance screen says
+   "PLAYER" up there — team screens show "TEAM 1 : 0 TEAM" instead.
+2. Player screens: a tiny probe where the Goalkeeping tab prints
+   "Goalkeeper Rating: X.X" splits player_gk from player_summary — no
+   body OCR at all.
+3. Team screens only (a handful per match): the body band, DOWNSCALED
+   (word presence doesn't need full resolution) — stat labels mean the
+   Summary tab, minute-spine rows mean the Events tab, the Threat
+   timeline means the unsupported Possession tab.
 
-decide() is pure so the logic is testable without OCR; classify_screenshot
-does the cropping/OCR and delegates. Reserved filenames always win over
-auto-classification (see pipeline.run_match_dir) — if a screen ever
-misclassifies, naming the file is the override.
+decide_player_screen/decide_team_screen are pure so the logic is testable
+without OCR. Reserved filenames always win over auto-classification (see
+pipeline.run_match_dir) — if a screen ever misclassifies, naming the file
+is the override.
 """
+
+try:
+    import cv2
+except ImportError:  # pragma: no cover - exercised only when cv2 isn't installed
+    cv2 = None
 
 from fifa_analytics.ocr.event_parse import parse_minute
 from fifa_analytics.ocr.extract import read_lines, read_text
 from fifa_analytics.ocr.preprocess import clean_for_ocr, crop_fractional
 
 HEADER_STRIP = (0.0, 0.0, 0.6, 0.16)   # catches "PLAYER PERFORMANCE" on player screens
+GK_PROBE = (0.36, 0.20, 0.56, 0.26)    # where the Goalkeeping tab prints "Goalkeeper Rating: X.X"
 BODY_BAND = (0.03, 0.16, 0.97, 0.95)   # everything under the tab bar on team screens
+
+# Classification only needs to spot words, not read digits precisely —
+# downscaling the body band ~halves OCR time again on 1080p+ screenshots.
+MAX_CLASSIFY_WIDTH = 900
 
 TEAM_SUMMARY_LABELS = (
     "possession", "shots", "expected goals", "passes", "tackles",
@@ -35,16 +48,26 @@ UNSUPPORTED_MARKERS = ("threat", "overall possession", "possession won")
 GK_MARKERS = ("goalkeeper rating", "shots against", "save success", "overall saving", "punch save")
 
 
-def decide(header_text: str, body_lines: list[str]) -> str:
-    """'player_summary' | 'player_gk' | 'team_summary' | 'team_events' | 'unsupported'."""
-    lowered_lines = [line.lower() for line in body_lines]
-    gk_hits = any(marker in line for line in lowered_lines for marker in GK_MARKERS)
-    if "player" in header_text.lower():
-        return "player_gk" if gk_hits else "player_summary"
-    if gk_hits:  # header OCR flaked but the Goalkeeping tab is unmistakable
-        return "player_gk"
+def _shrink(crop):
+    height, width = crop.shape[:2]
+    if width <= MAX_CLASSIFY_WIDTH:
+        return crop
+    scale = MAX_CLASSIFY_WIDTH / width
+    return cv2.resize(crop, (MAX_CLASSIFY_WIDTH, max(1, int(height * scale))), interpolation=cv2.INTER_AREA)
 
+
+def decide_player_screen(gk_probe_text: str) -> str:
+    """'player_gk' | 'player_summary' from the Goalkeeper-Rating probe."""
+    return "player_gk" if "goalkeep" in gk_probe_text.lower() else "player_summary"
+
+
+def decide_team_screen(body_lines: list[str]) -> str:
+    """'team_summary' | 'team_events' | 'player_gk' | 'unsupported' from the
+    body band of a screen whose header did NOT say PLAYER. player_gk is the
+    flaky-header fallback — its save-stat labels are unmistakable."""
     lowered = [line.lower() for line in body_lines]
+    if any(marker in line for line in lowered for marker in GK_MARKERS):
+        return "player_gk"
     if any(marker in line for line in lowered for marker in UNSUPPORTED_MARKERS):
         return "unsupported"
 
@@ -52,9 +75,6 @@ def decide(header_text: str, body_lines: list[str]) -> str:
     if label_hits >= 2:
         return "team_summary"
 
-    # Events-tab rows carry a minute token ("65'", "45+2'") somewhere in the
-    # line (the spine layout puts it mid-line between the two teams' names),
-    # alongside at least one name-like word.
     def is_event_row(line: str) -> bool:
         tokens = line.split()
         if len(tokens) < 2:  # a lone number (a score, a page dot) isn't a row
@@ -70,7 +90,12 @@ def decide(header_text: str, body_lines: list[str]) -> str:
 
 def classify_screenshot(image) -> str:
     header_crop = crop_fractional(image, HEADER_STRIP)
-    header_text, _ = read_text(clean_for_ocr(header_crop))
+    header_text, _ = read_text(clean_for_ocr(_shrink(header_crop)))
+    if "player" in header_text.lower():
+        probe_crop = crop_fractional(image, GK_PROBE)
+        probe_text, _ = read_text(clean_for_ocr(probe_crop))
+        return decide_player_screen(probe_text)
+
     body_crop = crop_fractional(image, BODY_BAND)
-    body_lines = [line["text"] for line in read_lines(clean_for_ocr(body_crop))]
-    return decide(header_text, body_lines)
+    body_lines = [line["text"] for line in read_lines(clean_for_ocr(_shrink(body_crop)))]
+    return decide_team_screen(body_lines)

@@ -528,20 +528,33 @@ def schedule_tab(conn, team_id: int, db_path: str) -> None:
         f"Screenshots are read from `{fixture['screenshot_dir']}`."
     )
     col_process, col_recompute, col_delete = st.columns(3)
-    if col_process.button("Process screenshots (OCR)"):
+    processing_key = f"processing_{fixture['match_id']}"
+    already_processing = st.session_state.get(processing_key, False)
+    if col_process.button("Process screenshots (OCR)", disabled=already_processing):
         if not os.path.isdir(fixture["screenshot_dir"]):
             st.error(f"Folder not found: {fixture['screenshot_dir']} — create it and drop this match's images in.")
         else:
-            with st.spinner("Running OCR — the first run downloads/loads the EasyOCR model and takes a while..."):
-                from fifa_analytics.ocr.pipeline import run_match_dir  # heavy import, only on click
+            from fifa_analytics.ocr.pipeline import MatchAlreadyProcessingError, run_match_dir  # heavy import, only on click
 
-                run_match_dir(db_path, fixture["screenshot_dir"], fixture["match_id"],
-                              fixture["home_team"], fixture["away_team"])
-            st.session_state["schedule_flash"] = (
-                "Screenshots processed. Review them in the validation UI "
-                "(`streamlit run src/fifa_analytics/validate_app.py -- --db "
-                f"{db_path}`), then click 'Recompute model + xPTS'."
-            )
+            st.session_state[processing_key] = True
+            try:
+                with st.spinner(
+                    "Running OCR — this can take several minutes for a full match's screenshots "
+                    "(longer on the very first run, which also downloads the EasyOCR model). "
+                    "Progress prints to the terminal you launched Streamlit from — don't click this again "
+                    "while it's running, that starts a second pass instead of speeding anything up."
+                ):
+                    run_match_dir(db_path, fixture["screenshot_dir"], fixture["match_id"],
+                                  fixture["home_team"], fixture["away_team"])
+                st.session_state["schedule_flash"] = (
+                    "Screenshots processed. Review them in the validation UI "
+                    "(`streamlit run src/fifa_analytics/validate_app.py -- --db "
+                    f"{db_path}`), then click 'Recompute model + xPTS'."
+                )
+            except MatchAlreadyProcessingError as already_running:
+                st.session_state["schedule_flash"] = str(already_running)
+            finally:
+                st.session_state[processing_key] = False
             st.rerun()
     if col_recompute.button("Recompute model + xPTS"):
         history_rows = recompute_all(db_path)

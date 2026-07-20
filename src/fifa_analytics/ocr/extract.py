@@ -1,16 +1,35 @@
 """Runs OCR on a preprocessed crop and parses the expected numeric type."""
 
+import os
 import re
 from functools import lru_cache
 
 import numpy as np
 
 
+def _gpu_available() -> bool:
+    """CUDA availability, off by one env var (FIFA_OCR_GPU=0 forces CPU —
+    useful if a GPU is present but flaky/out of VRAM for EasyOCR's model).
+    Import errors mean no usable torch+CUDA build; treated as no GPU rather
+    than raised, since this only gates a speed optimization."""
+    if os.environ.get("FIFA_OCR_GPU") == "0":
+        return False
+    try:
+        import torch
+
+        return torch.cuda.is_available()
+    except Exception:
+        return False
+
+
 @lru_cache(maxsize=1)
 def _reader():
     import easyocr
 
-    return easyocr.Reader(["en"], gpu=False)
+    use_gpu = _gpu_available()
+    print(f"EasyOCR: using {'GPU' if use_gpu else 'CPU'} "
+          f"({'set FIFA_OCR_GPU=0 to force CPU' if use_gpu else 'a CUDA GPU speeds this up 3-5x if you have one'})")
+    return easyocr.Reader(["en"], gpu=use_gpu)
 
 
 def read_text(crop: np.ndarray) -> tuple[str, float]:

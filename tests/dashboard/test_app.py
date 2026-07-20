@@ -237,3 +237,36 @@ def test_assistant_tab_degrades_without_ollama(tmp_path, monkeypatch):
     assert any("ollama.com" in str(block.value) for block in at.info)  # setup help shown
     at.chat_input[0].set_value("who should I sell?").run()
     assert not at.exception, at.exception  # data pack still renders, no crash
+
+
+def test_process_screenshots_shows_clear_message_when_already_locked(tmp_path, monkeypatch):
+    """Clicking Process screenshots while another run holds the lock for
+    the same fixture must surface the clear error, not crash or silently
+    start a second pass -- this is the fix for the real bug where a second
+    click/reload doubled every OCR call."""
+    db = tmp_path / "locked.db"
+    init_db(str(db))
+    conn = connect(str(db))
+    us = get_or_create_team(conn, "Us FC")
+    them = get_or_create_team(conn, "Them FC")
+    upsert_player(conn, "Someone", "ST", 80, "test", team_id=us)
+    season = get_or_create_season(conn, "2025-26")
+    shots = tmp_path / "shots"
+    shots.mkdir()
+    match = create_match(conn, season, 1, us, them, str(shots))
+    conn.commit()
+    conn.close()
+
+    from fifa_analytics.ocr.pipeline import _lock_path
+    lock = _lock_path(str(db), match)
+    lock.parent.mkdir(parents=True, exist_ok=True)
+    lock.write_text("already running")
+
+    at = _run(db, monkeypatch)
+    process_button = next(b for b in at.button if b.label == "Process screenshots (OCR)")
+    process_button.click().run()
+    assert not at.exception, at.exception
+
+    rendered = " ".join(str(block.value) for block in at.success) + " ".join(str(w.value) for w in at.warning)
+    assert "already being processed" in rendered
+    assert lock.exists()  # the pre-existing lock from the "other run" is untouched

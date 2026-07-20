@@ -11,5 +11,9 @@ data/crops/**
 !data/screenshots/.gitkeep
 !data/crops/.gitkeep
 
+# Per-match OCR processing locks (pipeline.py) — transient, never committed
+.ocr_locks/
+**/.ocr_locks/
+
 .env
 .DS_Store

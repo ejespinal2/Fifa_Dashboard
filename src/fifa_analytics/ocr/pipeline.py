@@ -35,6 +35,9 @@ a human to assign it in validate_app.py.
 """
 
 import hashlib
+import os
+import time
+from contextlib import contextmanager
 from pathlib import Path
 
 import cv2
@@ -66,6 +69,59 @@ from fifa_analytics.ocr.team_match import match_team_header
 
 REASSIGNED_SOURCE_LABEL = "eafc26-datahub:reassigned"
 REGEN_SOURCE_LABEL = "ocr:regen"
+
+# A run_match_dir call for the same fixture can take 10s of minutes. If the
+# UI's Process button gets clicked again before that finishes (it doesn't
+# visibly disable during a long blocking call, so a second click looks like
+# the only way to "unstick" it), a second full pass would start in parallel
+# -- doubling every classification/OCR call and racing writes to the same
+# DB. This lock makes a second concurrent call for the same match fail
+# fast with a clear message instead.
+LOCK_STALE_SECONDS = 2 * 60 * 60  # a crashed run's lock is abandoned after this
+
+
+class MatchAlreadyProcessingError(RuntimeError):
+    pass
+
+
+def _lock_path(db_path: str, match_id: int) -> Path:
+    lock_dir = Path(db_path).resolve().parent / ".ocr_locks"
+    lock_dir.mkdir(parents=True, exist_ok=True)
+    return lock_dir / f"match_{match_id}.lock"
+
+
+def _acquire_lock_file(path: Path) -> None:
+    """Raises MatchAlreadyProcessingError if a live lock holds path; clears
+    a stale one (crashed/killed prior run) and retries the atomic create
+    once before giving up."""
+    for attempt in range(2):
+        try:
+            fd = os.open(path, os.O_CREAT | os.O_EXCL | os.O_WRONLY)
+            os.write(fd, str(time.time()).encode())
+            os.close(fd)
+            return
+        except FileExistsError:
+            age = time.time() - path.stat().st_mtime
+            if age < LOCK_STALE_SECONDS:
+                raise MatchAlreadyProcessingError(
+                    "This match is already being processed (started "
+                    f"{age / 60:.0f} min ago) — wait for it to finish rather than clicking "
+                    "Process again; a second run would double every OCR call and race writes "
+                    "to the same database."
+                )
+            if attempt == 0:
+                path.unlink(missing_ok=True)  # stale -- clear it and retry the atomic create
+    raise MatchAlreadyProcessingError("Could not acquire the processing lock — try again.")
+
+
+@contextmanager
+def _match_lock(db_path: str, match_id: int):
+    path = _lock_path(db_path, match_id)
+    _acquire_lock_file(path)
+    try:
+        yield
+    finally:
+        path.unlink(missing_ok=True)
 
 
 def _file_hash(image_path: str) -> str:
@@ -457,6 +513,11 @@ def run_match_dir(db_path: str, match_dir: str, match_id: int, home_team_name: s
     unrenamed console screenshots works. Screens the pipeline can't parse
     (e.g. the Possession tab's Threat timeline) are skipped with a note.
     """
+    with _match_lock(db_path, match_id):
+        _run_match_dir_locked(db_path, match_dir, match_id, home_team_name, away_team_name)
+
+
+def _run_match_dir_locked(db_path: str, match_dir: str, match_id: int, home_team_name: str, away_team_name: str) -> None:
     conn = connect(db_path)
     try:
         home_team_id = get_team_id_by_name(conn, home_team_name)
@@ -470,17 +531,24 @@ def run_match_dir(db_path: str, match_dir: str, match_id: int, home_team_name: s
         match_path = Path(match_dir)
 
         # 1) content-classify every non-reserved image, then merge into the
-        #    name-routed buckets below
+        #    name-routed buckets below. Hash-check FIRST, before the (much
+        #    pricier) classification OCR: a duplicate download/re-run is
+        #    common and should cost nothing, not a wasted classify pass.
         from fifa_analytics.ocr.classify_screen import classify_screenshot
 
+        unreserved = _find_unreserved_images(match_path)
         classified: dict[str, list[Path]] = {"team_summary": [], "team_events": [], "player_summary": [], "player_gk": []}
-        for file in _find_unreserved_images(match_path):
+        total = len(unreserved)
+        for i, file in enumerate(unreserved, start=1):
+            if capture_hash_exists(conn, match_id, _file_hash(str(file))):
+                print(f"[{i}/{total}] {file.name}: identical image already processed for this match — skipped.")
+                continue
             kind = classify_screenshot(cv2.imread(str(file)))
             if kind in classified:
                 classified[kind].append(file)
-                print(f"{file.name}: auto-classified as {kind}")
+                print(f"[{i}/{total}] {file.name}: auto-classified as {kind}")
             else:
-                print(f"{file.name}: unsupported screen (e.g. Possession/Threat tab) — skipped. "
+                print(f"[{i}/{total}] {file.name}: unsupported screen (e.g. Possession/Threat tab) — skipped. "
                       "Rename to a reserved name to force a type.")
 
         # 2) name-routed files, exactly as before
@@ -497,26 +565,32 @@ def run_match_dir(db_path: str, match_dir: str, match_id: int, home_team_name: s
         team_events_files = _find_team_events_files(match_path) + classified["team_events"]
         if not team_events_files:
             print(f"No team_events screenshot found in {match_dir}")
-        for file in team_events_files:
+        for i, file in enumerate(team_events_files, start=1):
+            started = time.monotonic()
             _, stored = process_team_events(conn, match_id, str(file), home_team_id, away_team_id, candidates)
-            print(f"{file.name}: {len(stored)} new event(s) parsed")
+            print(f"[events {i}/{len(team_events_files)}] {file.name}: {len(stored)} new event(s) "
+                  f"({time.monotonic() - started:.1f}s)")
 
         player_summary_files = _find_player_summary_files(match_path) + classified["player_summary"]
         if not player_summary_files:
             print(f"No player_summary screenshots found in {match_dir}")
-        for file in player_summary_files:
+        for i, file in enumerate(player_summary_files, start=1):
+            started = time.monotonic()
             capture_id, confidence = process_player_summary(
                 conn, match_id, str(file), home_team_id, home_team_name, away_team_id, away_team_name, candidates, csv_rows
             )
-            if capture_id is not None and confidence not in ("exact",):
-                print(f"{file.name}: matched with confidence={confidence} (capture_id={capture_id}) — double-check in validate_app.py")
+            elapsed = time.monotonic() - started
+            flag = "" if confidence == "exact" else f" — double-check in validate_app.py (confidence={confidence})"
+            print(f"[player_summary {i}/{len(player_summary_files)}] {file.name}: {confidence} ({elapsed:.1f}s){flag}")
 
         player_gk_files = _find_player_gk_files(match_path) + classified["player_gk"]
-        for file in player_gk_files:
+        for i, file in enumerate(player_gk_files, start=1):
+            started = time.monotonic()
             capture_id, confidence = process_player_gk(
                 conn, match_id, str(file), home_team_id, home_team_name, away_team_id, away_team_name, candidates, csv_rows
             )
-            if capture_id is not None and confidence not in ("exact",):
-                print(f"{file.name}: matched with confidence={confidence} (capture_id={capture_id}) — double-check in validate_app.py")
+            elapsed = time.monotonic() - started
+            flag = "" if confidence == "exact" else f" — double-check in validate_app.py (confidence={confidence})"
+            print(f"[player_gk {i}/{len(player_gk_files)}] {file.name}: {confidence} ({elapsed:.1f}s){flag}")
     finally:
         conn.close()
