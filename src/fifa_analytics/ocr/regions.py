@@ -149,3 +149,37 @@ TEAM_EVENTS_ICON_ZONES = {
     "home": (0.448, 0.492),
     "away": (0.523, 0.558),
 }
+
+
+# ---------------------------------------------------------------------------
+# Player Performance -> Goalkeeping tab (one screenshot per keeper, alongside
+# their Summary-tab screenshot). Same screen family as player_summary, so the
+# team header and player-name crops are reused from PLAYER_SUMMARY_REGIONS —
+# only the stat list differs. Measured from a real 2000x1125 capture
+# (J. Oblak, Atlético): "Overall Saving" list on the right, labels from
+# x~1330 with right-aligned values at x~1855-1885, rows "Shots Against"
+# (y 347-375) down to "Cross Claim" (y 833-861).
+# ---------------------------------------------------------------------------
+
+PLAYER_GK_REGIONS = {
+    "stat_list_box": (0.66, 0.305, 0.945, 0.768),
+    "stat_value_col": (0.855, 0.945),
+    # "Goalkeeper Rating: 5.9" line above the goal mouth diagram
+    "goalkeeper_rating": (0.38, 0.21, 0.54, 0.25),
+}
+
+PLAYER_GK_STAT_ORDER = [
+    "gk_shots_against",
+    "gk_shots_on_target",
+    "gk_saves",
+    "gk_goals_conceded",
+    "gk_save_success_rate_pct",
+    "gk_punch_saves",
+    "gk_rush_saves",
+    "gk_penalty_saves",
+    "gk_penalty_goals_conceded",
+    "gk_shootout_saves",
+    "gk_shootout_goals_conceded",
+    "gk_punch_clearance",
+    "gk_cross_claim",
+]

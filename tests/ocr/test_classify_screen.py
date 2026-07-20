@@ -30,3 +30,12 @@ def test_spine_layout_event_rows_classify_as_events():
     # real Events-tab lines: minute mid-line, names either side
     lines = ["J. Cardoso 65' P. Dorgu", "65' D. Spence", "HT"]
     assert decide("ATLETICO DE MADRID 0 : 2 MAN UTD", lines) == "team_events"
+
+
+def test_goalkeeping_tab_classifies_as_player_gk():
+    lines = ["Goalkeeper Rating: 5.9", "Shots Against 11", "Save Success Rate (%) 67"]
+    assert decide("PLAYER PERFORMANCE", lines) == "player_gk"
+    # even with a flaky header read, the gk markers are unmistakable
+    assert decide("garbled", lines) == "player_gk"
+    # plain summary tab still routes to player_summary
+    assert decide("PLAYER PERFORMANCE", ["Goals 1", "Assists 0"]) == "player_summary"

@@ -32,12 +32,17 @@ TEAM_SUMMARY_LABELS = (
     "saves", "fouls", "corners", "offsides", "crosses", "interception",
 )
 UNSUPPORTED_MARKERS = ("threat", "overall possession", "possession won")
+GK_MARKERS = ("goalkeeper rating", "shots against", "save success", "overall saving", "punch save")
 
 
 def decide(header_text: str, body_lines: list[str]) -> str:
-    """'player_summary' | 'team_summary' | 'team_events' | 'unsupported'."""
+    """'player_summary' | 'player_gk' | 'team_summary' | 'team_events' | 'unsupported'."""
+    lowered_lines = [line.lower() for line in body_lines]
+    gk_hits = any(marker in line for line in lowered_lines for marker in GK_MARKERS)
     if "player" in header_text.lower():
-        return "player_summary"
+        return "player_gk" if gk_hits else "player_summary"
+    if gk_hits:  # header OCR flaked but the Goalkeeping tab is unmistakable
+        return "player_gk"
 
     lowered = [line.lower() for line in body_lines]
     if any(marker in line for line in lowered for marker in UNSUPPORTED_MARKERS):

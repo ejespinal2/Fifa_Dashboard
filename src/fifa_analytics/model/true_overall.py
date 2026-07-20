@@ -66,7 +66,7 @@ def _load_player_match_stats(conn, include_unreviewed: bool):
         f"""SELECT oc.player_id, oc.match_id, msv.stat_name, msv.stat_value
             FROM ocr_captures oc
             JOIN match_stat_values msv ON msv.capture_id = oc.capture_id
-            WHERE oc.capture_type = 'player_summary'
+            WHERE oc.capture_type IN ('player_summary', 'player_gk')
               AND oc.player_id IS NOT NULL
               {reviewed_filter}
             ORDER BY oc.match_id"""
@@ -76,7 +76,7 @@ def _load_player_match_stats(conn, include_unreviewed: bool):
     if not include_unreviewed:
         skipped = conn.execute(
             """SELECT COUNT(DISTINCT capture_id) FROM ocr_captures
-               WHERE capture_type = 'player_summary' AND player_id IS NOT NULL AND reviewed = 0"""
+               WHERE capture_type IN ('player_summary', 'player_gk') AND player_id IS NOT NULL AND reviewed = 0"""
         ).fetchone()[0]
 
     per_player: dict[int, dict[int, dict]] = defaultdict(dict)

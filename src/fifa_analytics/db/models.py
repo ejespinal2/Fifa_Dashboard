@@ -47,11 +47,58 @@ def _migrate_matches_competition(conn: sqlite3.Connection) -> None:
         conn.execute("ALTER TABLE matches ADD COLUMN competition TEXT")
 
 
+def _migrate_ocr_captures(conn: sqlite3.Connection) -> None:
+    """The Goalkeeping tab added a fourth capture_type ('player_gk') and
+    duplicate-image protection added a content_hash column. capture_type
+    lives in a CHECK constraint, which SQLite can't ALTER — so an old table
+    is rebuilt in place (new table, copy rows, swap). Data is preserved;
+    content_hash starts NULL on old rows (their files were processed before
+    hashing existed, and NULL never matches a dedupe lookup)."""
+    row = conn.execute(
+        "SELECT sql FROM sqlite_master WHERE type = 'table' AND name = 'ocr_captures'"
+    ).fetchone()
+    if row is None or ("player_gk" in row["sql"] and "content_hash" in row["sql"]):
+        return
+
+    conn.execute("PRAGMA foreign_keys = OFF")
+    try:
+        conn.execute(
+            """CREATE TABLE ocr_captures_new (
+                capture_id          INTEGER PRIMARY KEY,
+                match_id            INTEGER NOT NULL REFERENCES matches(match_id),
+                capture_type        TEXT NOT NULL CHECK (capture_type IN ('player_summary', 'player_gk', 'team_summary', 'team_events')),
+                player_id           INTEGER REFERENCES players(player_id),
+                team_id             INTEGER REFERENCES teams(team_id),
+                screenshot_path     TEXT NOT NULL,
+                ocr_confidence_avg  REAL,
+                raw_text            TEXT,
+                match_confidence    TEXT,
+                reviewed            INTEGER NOT NULL DEFAULT 0,
+                reviewed_at         TEXT,
+                content_hash        TEXT
+            )"""
+        )
+        conn.execute(
+            """INSERT INTO ocr_captures_new (capture_id, match_id, capture_type, player_id,
+                   team_id, screenshot_path, ocr_confidence_avg, raw_text, match_confidence,
+                   reviewed, reviewed_at)
+               SELECT capture_id, match_id, capture_type, player_id, team_id, screenshot_path,
+                   ocr_confidence_avg, raw_text, match_confidence, reviewed, reviewed_at
+               FROM ocr_captures"""
+        )
+        conn.execute("DROP TABLE ocr_captures")
+        conn.execute("ALTER TABLE ocr_captures_new RENAME TO ocr_captures")
+        conn.commit()
+    finally:
+        conn.execute("PRAGMA foreign_keys = ON")
+
+
 def init_db(db_path: str) -> None:
     conn = connect(db_path)
     try:
         _migrate_stale_scouting_candidates(conn)
         _migrate_matches_competition(conn)
+        _migrate_ocr_captures(conn)
         conn.executescript(SCHEMA_PATH.read_text())
         conn.commit()
     finally:
@@ -232,14 +279,36 @@ def create_capture(
     team_id: int | None = None,
     raw_text: str | None = None,
     match_confidence: str | None = None,
+    content_hash: str | None = None,
 ) -> int:
     cur = conn.execute(
-        """INSERT INTO ocr_captures (match_id, capture_type, player_id, team_id, screenshot_path, raw_text, match_confidence)
-           VALUES (?, ?, ?, ?, ?, ?, ?)""",
-        (match_id, capture_type, player_id, team_id, screenshot_path, raw_text, match_confidence),
+        """INSERT INTO ocr_captures (match_id, capture_type, player_id, team_id, screenshot_path, raw_text, match_confidence, content_hash)
+           VALUES (?, ?, ?, ?, ?, ?, ?, ?)""",
+        (match_id, capture_type, player_id, team_id, screenshot_path, raw_text, match_confidence, content_hash),
     )
     conn.commit()
     return cur.lastrowid
+
+
+def capture_hash_exists(conn: sqlite3.Connection, match_id: int, content_hash: str) -> bool:
+    """True when this exact image file was already processed for this match
+    — the accidental double-download / double-click-Process guard."""
+    row = conn.execute(
+        "SELECT 1 FROM ocr_captures WHERE match_id = ? AND content_hash = ? LIMIT 1",
+        (match_id, content_hash),
+    ).fetchone()
+    return row is not None
+
+
+def player_capture_exists(conn: sqlite3.Connection, match_id: int, player_id: int, capture_type: str) -> bool:
+    """True when this player already has this capture type for this match —
+    a second, DIFFERENT screenshot of the same player's tab would otherwise
+    double their stats in the model."""
+    row = conn.execute(
+        "SELECT 1 FROM ocr_captures WHERE match_id = ? AND player_id = ? AND capture_type = ? LIMIT 1",
+        (match_id, player_id, capture_type),
+    ).fetchone()
+    return row is not None
 
 
 def write_stat_values(conn: sqlite3.Connection, capture_id: int, stats: dict) -> None:

@@ -34,6 +34,7 @@ teams apart) does a capture fall all the way through to unresolved, needing
 a human to assign it in validate_app.py.
 """
 
+import hashlib
 from pathlib import Path
 
 import cv2
@@ -45,11 +46,13 @@ from fifa_analytics.cards.eafc26_datahub_importer import (
     upsert_player_from_row,
 )
 from fifa_analytics.db.models import (
+    capture_hash_exists,
     connect,
     create_capture,
     create_match_event,
     event_exists,
     get_team_id_by_name,
+    player_capture_exists,
     players_for_teams,
     upsert_player,
     write_stat_values,
@@ -63,6 +66,22 @@ from fifa_analytics.ocr.team_match import match_team_header
 
 REASSIGNED_SOURCE_LABEL = "eafc26-datahub:reassigned"
 REGEN_SOURCE_LABEL = "ocr:regen"
+
+
+def _file_hash(image_path: str) -> str:
+    with open(image_path, "rb") as f:
+        return hashlib.md5(f.read()).hexdigest()
+
+
+def _hash_unless_duplicate(conn, match_id: int, image_path: str) -> str | None:
+    """Returns the image's content hash to stamp on its capture, or None
+    when this exact file was already processed for this match (an
+    accidental double-download or a re-clicked Process run) — skip it."""
+    content_hash = _file_hash(image_path)
+    if capture_hash_exists(conn, match_id, content_hash):
+        print(f"{Path(image_path).name}: identical image already processed for this match — skipped.")
+        return None
+    return content_hash
 
 
 def _split_row_value_cols(
@@ -122,6 +141,10 @@ def process_player_summary(
     still gets created (stats intact, player_id/team_id left NULL) for
     manual assignment in validate_app.py.
     """
+    content_hash = _hash_unless_duplicate(conn, match_id, image_path)
+    if content_hash is None:
+        return None, "duplicate_image"
+
     image = cv2.imread(image_path)
 
     header_crop = crop_fractional(image, regions.PLAYER_SUMMARY_REGIONS["team_header"])
@@ -138,6 +161,10 @@ def process_player_summary(
         team_candidates = [c for c in candidates if c["team_id"] == team_match.team_id]
         player_id, confidence = resolve_player(conn, cleaned_name, team_match.team_id, team_candidates, csv_rows)
         team_id = team_match.team_id
+        if player_id is not None and player_capture_exists(conn, match_id, player_id, "player_summary"):
+            print(f"{Path(image_path).name}: {cleaned_name!r} already has a player_summary for this match — skipped "
+                  "(a different screenshot of the same tab would double their stats).")
+            return None, "duplicate_player"
     else:
         print(f"Could not tell which team {image_path} belongs to (OCR read {header_text!r}) — needs manual assignment.")
         player_id, team_id, confidence = None, None, "unresolved_team"
@@ -151,6 +178,7 @@ def process_player_summary(
         team_id=team_id,
         raw_text=ocr_name,
         match_confidence=confidence,
+        content_hash=content_hash,
     )
 
     stats = _split_row_value_cols(
@@ -170,10 +198,78 @@ def process_player_summary(
     return capture_id, confidence
 
 
+def process_player_gk(
+    conn,
+    match_id: int,
+    image_path: str,
+    home_team_id: int,
+    home_team_name: str,
+    away_team_id: int,
+    away_team_name: str,
+    candidates: list,
+    csv_rows: list,
+) -> tuple[int | None, str]:
+    """The Player Performance screen's Goalkeeping tab — one per keeper,
+    captured ALONGSIDE their Summary-tab screenshot (the Summary tab
+    carries minutes played, which weights all model evidence; the
+    Goalkeeping tab carries the save stats that actually describe a
+    keeper's match). Same screen family as player_summary, so the team
+    header and player name resolve identically; only the stat list
+    differs. Stored as capture_type 'player_gk' with gk_-prefixed stat
+    names plus the tab's own goalkeeper_rating.
+    """
+    content_hash = _hash_unless_duplicate(conn, match_id, image_path)
+    if content_hash is None:
+        return None, "duplicate_image"
+
+    image = cv2.imread(image_path)
+
+    header_crop = crop_fractional(image, regions.PLAYER_SUMMARY_REGIONS["team_header"])
+    header_text, _ = read_text(clean_for_ocr(header_crop))
+    team_match = match_team_header(header_text, home_team_id, home_team_name, away_team_id, away_team_name)
+
+    name_crop = crop_fractional(image, regions.PLAYER_SUMMARY_REGIONS["active_player_name"])
+    ocr_name, _ = read_text(clean_for_ocr(name_crop))
+    cleaned_name = clean_ocr_name(ocr_name)
+
+    if team_match.team_id is not None:
+        team_candidates = [c for c in candidates if c["team_id"] == team_match.team_id]
+        player_id, confidence = resolve_player(conn, cleaned_name, team_match.team_id, team_candidates, csv_rows)
+        team_id = team_match.team_id
+        if player_id is not None and player_capture_exists(conn, match_id, player_id, "player_gk"):
+            print(f"{Path(image_path).name}: {cleaned_name!r} already has a player_gk capture for this match — skipped.")
+            return None, "duplicate_player"
+    else:
+        print(f"Could not tell which team {image_path} belongs to (OCR read {header_text!r}) — needs manual assignment.")
+        player_id, team_id, confidence = None, None, "unresolved_team"
+
+    capture_id = create_capture(
+        conn, match_id, "player_gk", image_path,
+        player_id=player_id, team_id=team_id, raw_text=ocr_name,
+        match_confidence=confidence, content_hash=content_hash,
+    )
+
+    stats = _split_row_value_cols(
+        image,
+        regions.PLAYER_GK_REGIONS["stat_list_box"],
+        regions.PLAYER_GK_STAT_ORDER,
+        regions.PLAYER_GK_REGIONS["stat_value_col"],
+    )
+    rating_crop = crop_fractional(image, regions.PLAYER_GK_REGIONS["goalkeeper_rating"])
+    stats["goalkeeper_rating"] = read_field(clean_for_ocr(rating_crop))
+
+    write_stat_values(conn, capture_id, stats)
+    return capture_id, confidence
+
+
 def process_team_summary(conn, match_id: int, home_team_id: int, away_team_id: int, image_path: str) -> list[int]:
     """One screenshot shows both teams' columns side by side, so it produces
     two captures — one per team — sharing the same screenshot_path.
     """
+    content_hash = _hash_unless_duplicate(conn, match_id, image_path)
+    if content_hash is None:
+        return []
+
     image = cv2.imread(image_path)
     capture_ids = []
 
@@ -181,7 +277,7 @@ def process_team_summary(conn, match_id: int, home_team_id: int, away_team_id: i
         (home_team_id, regions.TEAM_SUMMARY_REGIONS["stat_value_col_home"]),
         (away_team_id, regions.TEAM_SUMMARY_REGIONS["stat_value_col_away"]),
     ):
-        capture_id = create_capture(conn, match_id, "team_summary", image_path, team_id=team_id)
+        capture_id = create_capture(conn, match_id, "team_summary", image_path, team_id=team_id, content_hash=content_hash)
         stats = _split_row_value_cols(
             image,
             regions.TEAM_SUMMARY_REGIONS["stat_list_box"],
@@ -247,6 +343,10 @@ def process_team_events(
 
     Returns (capture_id, [event_info dicts actually stored]).
     """
+    content_hash = _hash_unless_duplicate(conn, match_id, image_path)
+    if content_hash is None:
+        return None, []
+
     image = cv2.imread(image_path)
 
     band = regions.TEAM_EVENTS_REGIONS["event_band"]
@@ -256,7 +356,7 @@ def process_team_events(
     confidence = (
         sum(f["confidence"] for f in fragments) / len(fragments) if fragments else 0.0
     )
-    capture_id = create_capture(conn, match_id, "team_events", image_path, raw_text=raw_text)
+    capture_id = create_capture(conn, match_id, "team_events", image_path, raw_text=raw_text, content_hash=content_hash)
     conn.execute(
         "UPDATE ocr_captures SET ocr_confidence_avg = ? WHERE capture_id = ?",
         (confidence, capture_id),
@@ -308,6 +408,14 @@ def _find_player_summary_files(match_path: Path) -> list[Path]:
     return sorted(found)
 
 
+def _find_player_gk_files(match_path: Path) -> list[Path]:
+    found = set()
+    for ext in IMAGE_EXTENSIONS:
+        found.update(match_path.glob(f"player_gk{ext}"))
+        found.update(match_path.glob(f"player_gk_*{ext}"))
+    return sorted(found)
+
+
 def _find_team_events_files(match_path: Path) -> list[Path]:
     """team_events.png alone, or team_events.png + team_events_2.png + ...
     when the events list needed scrolling to capture in full. Overlap
@@ -325,7 +433,11 @@ def _find_unreserved_images(match_path: Path) -> list[Path]:
     (team_summary / team_events[_N] / player_summary_*) — these get
     content-classified instead of name-routed, so straight-off-the-console
     filenames like IMG_0042.jpg work without renaming."""
-    reserved = set(_find_player_summary_files(match_path)) | set(_find_team_events_files(match_path))
+    reserved = (
+        set(_find_player_summary_files(match_path))
+        | set(_find_team_events_files(match_path))
+        | set(_find_player_gk_files(match_path))
+    )
     single = _find_single_file(match_path, "team_summary")
     if single is not None:
         reserved.add(single)
@@ -361,7 +473,7 @@ def run_match_dir(db_path: str, match_dir: str, match_id: int, home_team_name: s
         #    name-routed buckets below
         from fifa_analytics.ocr.classify_screen import classify_screenshot
 
-        classified: dict[str, list[Path]] = {"team_summary": [], "team_events": [], "player_summary": []}
+        classified: dict[str, list[Path]] = {"team_summary": [], "team_events": [], "player_summary": [], "player_gk": []}
         for file in _find_unreserved_images(match_path):
             kind = classify_screenshot(cv2.imread(str(file)))
             if kind in classified:
@@ -396,7 +508,15 @@ def run_match_dir(db_path: str, match_dir: str, match_id: int, home_team_name: s
             capture_id, confidence = process_player_summary(
                 conn, match_id, str(file), home_team_id, home_team_name, away_team_id, away_team_name, candidates, csv_rows
             )
-            if confidence not in ("exact",):
+            if capture_id is not None and confidence not in ("exact",):
+                print(f"{file.name}: matched with confidence={confidence} (capture_id={capture_id}) — double-check in validate_app.py")
+
+        player_gk_files = _find_player_gk_files(match_path) + classified["player_gk"]
+        for file in player_gk_files:
+            capture_id, confidence = process_player_gk(
+                conn, match_id, str(file), home_team_id, home_team_name, away_team_id, away_team_name, candidates, csv_rows
+            )
+            if capture_id is not None and confidence not in ("exact",):
                 print(f"{file.name}: matched with confidence={confidence} (capture_id={capture_id}) — double-check in validate_app.py")
     finally:
         conn.close()

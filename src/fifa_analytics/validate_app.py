@@ -91,7 +91,7 @@ def main():
     with col_fields:
         selected_player_id = None
 
-        if capture["capture_type"] == "player_summary" and capture["player_id"] is None:
+        if capture["capture_type"] in ("player_summary", "player_gk") and capture["player_id"] is None:
             st.warning(
                 f"Couldn't auto-match a player for this screenshot. OCR read the name as: "
                 f"**{capture['raw_text'] or '(nothing read)'}**"
@@ -103,7 +103,7 @@ def main():
             if choice != "-- select --":
                 selected_player_id = options[choice]["player_id"]
                 st.caption(f"Will assign to {choice} on confirm.")
-        elif capture["capture_type"] == "player_summary":
+        elif capture["capture_type"] in ("player_summary", "player_gk"):
             note = {
                 "reassigned": "⚠️ Auto-reassigned from another club (a transferred player found elsewhere in the card dataset) — worth a double-check.",
                 "new_player": "⚠️ No card data found anywhere — created as a brand-new player (likely a Career Mode academy graduate). Verify the name spelling.",
@@ -125,7 +125,11 @@ def main():
                     label, value=row["stat_value"] if row["stat_value"] is not None else 0.0, key=f"{capture['capture_id']}_{row['stat_name']}"
                 )
 
-        confirm_blocked = capture["capture_type"] == "player_summary" and capture["player_id"] is None and selected_player_id is None
+        confirm_blocked = (
+            capture["capture_type"] in ("player_summary", "player_gk")
+            and capture["player_id"] is None
+            and selected_player_id is None
+        )
         if st.button("Confirm and mark reviewed", type="primary", disabled=confirm_blocked):
             if selected_player_id is not None:
                 home_id, away_id = load_match_team_ids(conn, capture["match_id"])

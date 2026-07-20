@@ -170,6 +170,55 @@ def score_match_performance(stats: dict) -> dict:
         for attr in scores:
             scores[attr] = (1 - MATCH_RATING_BLEND) * scores[attr] + MATCH_RATING_BLEND * rating_score
 
+    # Goalkeeping-tab evidence merges in last (its own rating blend inside).
+    scores.update(_score_goalkeeping(stats))
+    return scores
+
+
+# Commanding-the-box actions (claims, punches, rush-outs) at/above this in a
+# match reads as a 1.0 — keepers rarely log more than a handful.
+CAP_GK_BOX_ACTIONS = 4.0
+
+
+def _score_goalkeeping(stats: dict) -> dict:
+    """Evidence from the Goalkeeping tab's stats (see
+    regions.PLAYER_GK_STAT_ORDER — captured per keeper alongside their
+    Summary tab). Feeds the two attributes GK overalls lean on:
+
+    - defending  <- shot-stopping: save success rate when they actually
+      faced shots on target, with a kicker per penalty saved.
+    - physical   <- commanding the box: cross claims, punch work, rush
+      saves — raw counts (this tab has no minutes; these are match-level).
+
+    Only keepers ever have these stats, so outfield scoring is untouched.
+    The tab's own Goalkeeper Rating blends in like match_rating does.
+    """
+
+    def get(name):
+        value = stats.get(name)
+        return float(value) if value is not None else None
+
+    scores: dict[str, float] = {}
+
+    shots_on_target = get("gk_shots_on_target")
+    if shots_on_target and shots_on_target > 0:
+        saves = get("gk_saves") or 0.0
+        save_rate = _clamp(saves / shots_on_target)
+        penalty_kicker = 0.15 * min(get("gk_penalty_saves") or 0.0, 2.0)
+        scores["defending"] = _clamp(save_rate + penalty_kicker)
+
+    box_actions = sum(
+        get(stat) or 0.0
+        for stat in ("gk_cross_claim", "gk_punch_clearance", "gk_punch_saves", "gk_rush_saves")
+    )
+    if box_actions > 0:
+        scores["physical"] = _clamp(box_actions / CAP_GK_BOX_ACTIONS)
+
+    rating = get("goalkeeper_rating")
+    if rating is not None and scores:
+        rating_score = _clamp((rating - 5.0) / 4.0)
+        for attr in scores:
+            scores[attr] = (1 - MATCH_RATING_BLEND) * scores[attr] + MATCH_RATING_BLEND * rating_score
     return scores
 
 

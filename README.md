@@ -93,13 +93,28 @@ Read-only Streamlit views over everything Phases 1-4 compute, one tab each
   Fat-fingered fixtures can be deleted along with anything attached to
   them.
 - **Screenshot filenames are optional.** Reserved names (`team_summary`,
-  `team_events`, `team_events_2`…, `player_summary_*`) are routed by name,
-  exactly as always — and any *other* image in the folder is classified by
-  content (`ocr/classify_screen.py`): the Player Performance screen by its
-  header, the team Summary by its stat labels, the Events tab by its
-  "player + minute" rows. Unparseable screens (e.g. the Possession tab's
-  Threat timeline) are skipped with a printed note. If auto-classification
-  ever gets one wrong, renaming the file to a reserved name overrides it.
+  `team_events`, `team_events_2`…, `player_summary_*`, `player_gk_*`) are
+  routed by name, exactly as always — and any *other* image in the folder
+  is classified by content (`ocr/classify_screen.py`): the Player
+  Performance screen by its header (its Goalkeeping tab by its save-stat
+  labels), the team Summary by its stat labels, the Events tab by its
+  minute-spine rows. Unparseable screens (e.g. the Possession tab's Threat
+  timeline) are skipped with a printed note. If auto-classification ever
+  gets one wrong, renaming the file to a reserved name overrides it.
+- **Duplicate protection, two layers.** Every image is content-hashed per
+  match: the identical file dropped twice (or *Process screenshots*
+  clicked twice) is skipped outright. And a player who already has a
+  capture of a given type for a match is never given a second one from a
+  different screenshot — that would silently double their stats in the
+  model. Both skips print exactly what happened.
+- **Goalkeepers get their own tab.** Capture the keeper's Player
+  Performance → **Goalkeeping** tab alongside their Summary tab. Its
+  save stats (shots against/on target, saves, save success rate, penalty
+  saves, punch/rush/claim work) feed the model's GK scoring: shot-stopping
+  evidence flows into `defending` and box-command into `physical` — the
+  two attributes GK overalls lean on — with the tab's own Goalkeeper
+  Rating blended in like the match rating. The Summary tab is still
+  needed (it carries minutes played, which weights all evidence).
 - **Manage** — player search across every roster (regens included) with a
   transfer control, for moves you know happened in your save but haven't
   captured yet (the OCR pipeline re-homes players automatically when it

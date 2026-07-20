@@ -58,7 +58,7 @@ CREATE TABLE IF NOT EXISTS matches (
 CREATE TABLE IF NOT EXISTS ocr_captures (
     capture_id          INTEGER PRIMARY KEY,
     match_id            INTEGER NOT NULL REFERENCES matches(match_id),
-    capture_type        TEXT NOT NULL CHECK (capture_type IN ('player_summary', 'team_summary', 'team_events')),
+    capture_type        TEXT NOT NULL CHECK (capture_type IN ('player_summary', 'player_gk', 'team_summary', 'team_events')),
     player_id           INTEGER REFERENCES players(player_id),   -- set for player_summary once matched, NULL otherwise
     team_id             INTEGER REFERENCES teams(team_id),       -- set for team_summary and (once its header is matched) player_summary; NULL for team_events
     screenshot_path     TEXT NOT NULL,
@@ -71,7 +71,8 @@ CREATE TABLE IF NOT EXISTS ocr_captures (
     -- ocr/pipeline.py's module docstring for the full fallback chain.
     match_confidence    TEXT,
     reviewed            INTEGER NOT NULL DEFAULT 0,
-    reviewed_at         TEXT
+    reviewed_at         TEXT,
+    content_hash        TEXT               -- md5 of the image file; dedupes accidental double-drops/re-runs
 );
 
 -- Every stat visible on a Player Summary or Team Summary screen, one row per

@@ -186,3 +186,62 @@ def test_event_exists_dedupes_overlapping_screenshots(tmp_path):
     # same player+minute but different type is a different event (goal + booking in the same minute)
     assert not event_exists(conn, match, player, 37, "yellow_card")
     conn.close()
+
+
+def test_init_db_rebuilds_ocr_captures_for_player_gk_and_hash(tmp_path):
+    """Old databases have ocr_captures with a CHECK that rejects
+    'player_gk' and no content_hash column; SQLite can't ALTER a CHECK, so
+    init_db rebuilds the table in place, keeping every row."""
+    path = str(tmp_path / "old.db")
+    conn = sqlite3.connect(path)
+    conn.execute("CREATE TABLE matches (match_id INTEGER PRIMARY KEY)")
+    conn.execute("CREATE TABLE players (player_id INTEGER PRIMARY KEY)")
+    conn.execute("CREATE TABLE teams (team_id INTEGER PRIMARY KEY)")
+    conn.execute(
+        """CREATE TABLE ocr_captures (
+            capture_id INTEGER PRIMARY KEY,
+            match_id INTEGER NOT NULL REFERENCES matches(match_id),
+            capture_type TEXT NOT NULL CHECK (capture_type IN ('player_summary', 'team_summary', 'team_events')),
+            player_id INTEGER REFERENCES players(player_id),
+            team_id INTEGER REFERENCES teams(team_id),
+            screenshot_path TEXT NOT NULL,
+            ocr_confidence_avg REAL, raw_text TEXT, match_confidence TEXT,
+            reviewed INTEGER NOT NULL DEFAULT 0, reviewed_at TEXT
+        )"""
+    )
+    conn.execute("INSERT INTO matches (match_id) VALUES (1)")
+    conn.execute(
+        "INSERT INTO ocr_captures (match_id, capture_type, screenshot_path, reviewed) VALUES (1, 'player_summary', 'x.png', 1)"
+    )
+    conn.commit()
+    conn.close()
+
+    init_db(path)
+
+    conn = connect(path)
+    row = conn.execute("SELECT * FROM ocr_captures").fetchone()
+    assert row["capture_type"] == "player_summary" and row["reviewed"] == 1  # data survived
+    assert row["content_hash"] is None
+    # and the new type + column work
+    conn.execute(
+        "INSERT INTO ocr_captures (match_id, capture_type, screenshot_path, content_hash) VALUES (1, 'player_gk', 'g.png', 'abc')"
+    )
+    conn.commit()
+    conn.close()
+
+
+def test_capture_and_player_dedupe_helpers(tmp_path):
+    from fifa_analytics.db.models import capture_hash_exists, create_capture, player_capture_exists
+    path = str(tmp_path / "t.db")
+    init_db(path)
+    conn = connect(path)
+    us, them, match, player = _match_with_data(conn)
+
+    assert not capture_hash_exists(conn, match, "hash1")
+    create_capture(conn, match, "player_summary", "a.png", player_id=player, content_hash="hash1")
+    assert capture_hash_exists(conn, match, "hash1")
+    assert not capture_hash_exists(conn, match, "hash2")
+
+    assert player_capture_exists(conn, match, player, "player_summary")
+    assert not player_capture_exists(conn, match, player, "player_gk")
+    conn.close()
