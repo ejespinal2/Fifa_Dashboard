@@ -77,7 +77,7 @@ PLAYER_SUMMARY_REGIONS = {
     # (extract.read_leftmost_number), so if the team column's edge sneaks in
     # on the right it's ignored; the box just has to cover the player column
     # and clear the stat labels on the left.
-    "stat_value_span": (0.89, 0.93),
+    "stat_value_span": (0.89, 0.92),
 }
 
 
