@@ -28,9 +28,25 @@ def _reader():
     return easyocr.Reader(["en"], gpu=use_gpu)
 
 
-def read_text(crop: np.ndarray) -> tuple[str, float]:
-    """Returns (raw_text, confidence in [0, 1]). Empty crop -> ("", 0.0)."""
-    results = _reader().readtext(crop, detail=1, paragraph=False)
+# EasyOCR's recognizer scores every character against its FULL trained
+# alphabet (letters, digits, punctuation) unless told otherwise, so a digit
+# crop is competing against visually similar letters too -- 0/O, 1/I/l,
+# 8/B, 5/S. Passing an allowlist for a field known to be numeric removes
+# those letters from consideration entirely, which is a real accuracy
+# fix (fewer candidates to confuse a digit with), not a pixel-threshold
+# guess: EasyOCR's own docs recommend this for exactly this kind of
+# constrained field. Kept narrow -- read_text's other callers (names,
+# event rows mixing names with minutes) must NOT get this, so it's opt-in
+# per call, not a global default.
+NUMERIC_ALLOWLIST = "0123456789.,%-"
+
+
+def read_text(crop: np.ndarray, allowlist: str | None = None) -> tuple[str, float]:
+    """Returns (raw_text, confidence in [0, 1]). Empty crop -> ("", 0.0).
+    Pass allowlist (e.g. NUMERIC_ALLOWLIST) for a crop known to hold only
+    those characters -- see the constant's docstring for why this helps."""
+    kwargs = {"allowlist": allowlist} if allowlist else {}
+    results = _reader().readtext(crop, detail=1, paragraph=False, **kwargs)
     if not results:
         return "", 0.0
     # Multiple text fragments in one crop (shouldn't happen for a
@@ -121,6 +137,9 @@ def parse_numeric(raw_text: str) -> float | None:
 
 
 def read_field(crop: np.ndarray) -> tuple[float | None, float]:
-    """End-to-end: OCR a crop, parse it as a number, return (value, confidence)."""
-    raw_text, confidence = read_text(crop)
+    """End-to-end: OCR a crop, parse it as a number, return (value, confidence).
+    Every caller of this is a stat/rating value crop, never a name -- so it
+    always OCRs with NUMERIC_ALLOWLIST, cutting out the letter/digit
+    confusions (0/O, 1/I, 8/B, 5/S) a full-alphabet read is prone to."""
+    raw_text, confidence = read_text(crop, allowlist=NUMERIC_ALLOWLIST)
     return parse_numeric(raw_text), confidence

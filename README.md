@@ -422,6 +422,20 @@ snapshot, never hand-edited data like your players/matches).
 
 ## Known gaps going into real use
 
+- **Numeric OCR (stat values, ratings, minutes) restricted to a digit
+  allowlist.** Real use turned up misreads like `100` coming back wrong,
+  and `0`/`O`, `1`/`I`, `8`/`B`, `5`/`S` swapped — all consistent with
+  EasyOCR scoring the full letter+digit alphabet as candidates for a crop
+  that's actually pure numeric. Every stat/rating field now OCRs with an
+  allowlist of `0123456789.,%-` (`ocr/extract.py`'s `read_field`), which
+  removes those cross-alphabet confusions outright — a real accuracy fix,
+  not a guess. Name/header reads are untouched (an allowlist there would
+  break them). **What this does NOT fix**: confusion between two digits
+  that look alike at this resolution (e.g. `3` vs `8`) — that's a
+  same-alphabet problem the allowlist can't help with, and would need
+  actual example crops to diagnose (adaptive-threshold tuning in
+  `preprocess.py`'s `clean_for_ocr`) rather than another guess. If this
+  keeps happening after the allowlist fix, send the specific screenshot.
 - **Team Events: any number of events, any number of scrolled screenshots,
   layout calibrated against real multi-event captures.** The Events tab
   lays events out on a center spine — minute circles in the middle, the
