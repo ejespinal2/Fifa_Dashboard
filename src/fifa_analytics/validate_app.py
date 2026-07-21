@@ -44,13 +44,46 @@ def get_conn(db_path: str) -> sqlite3.Connection:
     return connect(db_path)
 
 
-def load_unreviewed_captures(conn: sqlite3.Connection):
+def load_captures(
+    conn: sqlite3.Connection,
+    match_id: int | None = None,
+    capture_type: str | None = None,
+    include_reviewed: bool = False,
+):
+    """The review queue, filterable by match/capture type. Confirmed
+    captures are excluded by default (as before) -- include_reviewed=True
+    is how a mistake noticed AFTER confirming (the real case that came up:
+    a team_events row read wrong, discovered only after Recompute had
+    already run) gets fixed, since confirming used to hide a capture from
+    this page forever with no way back."""
+    conditions = []
+    params: list = []
+    if not include_reviewed:
+        conditions.append("reviewed = 0")
+    if match_id is not None:
+        conditions.append("match_id = ?")
+        params.append(match_id)
+    if capture_type is not None:
+        conditions.append("capture_type = ?")
+        params.append(capture_type)
+    where = f"WHERE {' AND '.join(conditions)}" if conditions else ""
     return conn.execute(
-        """SELECT capture_id, match_id, capture_type, player_id, team_id,
-                  screenshot_path, ocr_confidence_avg, raw_text, match_confidence
-           FROM ocr_captures
-           WHERE reviewed = 0
-           ORDER BY ocr_confidence_avg ASC NULLS FIRST"""
+        f"""SELECT capture_id, match_id, capture_type, player_id, team_id,
+                   screenshot_path, ocr_confidence_avg, raw_text, match_confidence, reviewed
+            FROM ocr_captures
+            {where}
+            ORDER BY reviewed ASC, ocr_confidence_avg ASC NULLS FIRST""",
+        params,
+    ).fetchall()
+
+
+def load_matches(conn: sqlite3.Connection):
+    return conn.execute(
+        """SELECT m.match_id, ht.name AS home_name, at.name AS away_name
+           FROM matches m
+           JOIN teams ht ON ht.team_id = m.home_team_id
+           JOIN teams at ON at.team_id = m.away_team_id
+           ORDER BY m.match_id DESC"""
     ).fetchall()
 
 
@@ -82,13 +115,37 @@ def main():
     st.title("OCR Validation Queue")
 
     conn = get_conn(get_db_path())
-    captures = load_unreviewed_captures(conn)
+
+    matches = load_matches(conn)
+    match_options = {"All matches": None}
+    for m in matches:
+        match_options[f"#{m['match_id']}: {m['home_name']} vs {m['away_name']}"] = m["match_id"]
+
+    with st.sidebar:
+        st.header("Filter")
+        match_choice = st.selectbox("Match", list(match_options.keys()))
+        type_choice = st.selectbox(
+            "Capture type", ["All", "team_summary", "team_events", "player_summary", "player_gk"]
+        )
+        include_reviewed = st.checkbox(
+            "Include already-reviewed captures",
+            value=False,
+            help="Confirming hides a capture from this queue by default. Check this to go back "
+                 "and fix something you already confirmed but later noticed was wrong.",
+        )
+
+    captures = load_captures(
+        conn,
+        match_id=match_options[match_choice],
+        capture_type=None if type_choice == "All" else type_choice,
+        include_reviewed=include_reviewed,
+    )
 
     if not captures:
-        st.success("Nothing left to review.")
+        st.success("Nothing matches this filter.")
         return
 
-    st.caption(f"{len(captures)} capture(s) awaiting review, lowest confidence first.")
+    st.caption(f"{len(captures)} capture(s) match this filter, lowest confidence first.")
 
     capture = captures[0]
     st.subheader(
@@ -97,6 +154,8 @@ def main():
         if capture["ocr_confidence_avg"] is not None
         else f"{capture['capture_type']} — match {capture['match_id']}"
     )
+    if capture["reviewed"]:
+        st.info("Already confirmed once — re-confirming will overwrite it with any edits below.")
 
     col_img, col_fields = st.columns([1, 1])
 

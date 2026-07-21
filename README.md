@@ -410,6 +410,16 @@ snapshot, never hand-edited data like your players/matches).
    ("worth a double-check") rather than looking identical to a confident
    exact match.
 
+   **Confirming a capture hides it from this queue — by design, so the
+   model only sees reviewed data — but that also means a mistake spotted
+   only after confirming (e.g. after Recompute, from the Match Facts view)
+   used to have no way back.** The sidebar now has a Match filter, a
+   Capture type filter, and an **"Include already-reviewed captures"**
+   checkbox — check it to bring a confirmed capture back into view, fix
+   it, and re-confirm. Use the Match/Capture type filters together to jump
+   straight to e.g. one fixture's `team_events` capture instead of paging
+   through everything else in confidence order first.
+
 ## Known gaps going into real use
 
 - **Team Events: any number of events, any number of scrolled screenshots,

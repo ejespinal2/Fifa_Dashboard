@@ -22,6 +22,7 @@ from fifa_analytics.db.models import (
     get_or_create_team,
     init_db,
     load_match_events,
+    mark_reviewed,
     replace_match_events,
     upsert_player,
 )
@@ -161,3 +162,39 @@ def test_add_another_event_row_lets_a_missed_event_be_recorded(tmp_path, monkeyp
     conn = connect(str(db_path))
     events = load_match_events(conn, capture_id)
     assert {(e["minute"], e["event_type"]) for e in events} == {(41, "goal"), (88, "sub_off")}
+
+
+def test_already_reviewed_capture_is_hidden_by_default_but_fixable_via_the_toggle(tmp_path, monkeypatch):
+    """The real bug this covers: a reviewer already confirmed this
+    team_events capture (that's how a wrong "unknown" event made it into
+    Match Facts/Recompute in the first place) -- so by the old behavior it
+    vanished from the queue forever, and the new per-row editor never had
+    anything to act on. The "Include already-reviewed captures" checkbox
+    is the fix: it brings a confirmed capture back so it can be corrected
+    and re-confirmed."""
+    db_path, match_id, capture_id, home_id, away_id, sesko = _seed_match_with_event(tmp_path)
+    conn = connect(str(db_path))
+    mark_reviewed(conn, capture_id, "2026-01-01T00:00:00+00:00")
+    conn.close()
+
+    monkeypatch.setattr(sys, "argv", ["validate_app.py", "--db", str(db_path)])
+    at = AppTest.from_file(APP_PATH, default_timeout=30)
+    at.run()
+    assert not at.exception, at.exception
+    assert "Nothing matches this filter" in at.success[0].value
+
+    reviewed_checkbox = next(cb for cb in at.sidebar.checkbox if cb.label == "Include already-reviewed captures")
+    reviewed_checkbox.check().run()
+    assert not at.exception, at.exception
+
+    type_key = f"{capture_id}_event_1_type"
+    assert at.selectbox(key=type_key).value == "unknown"
+    at.selectbox(key=type_key).select("goal").run()
+    confirm_button = next(b for b in at.button if b.label == "Confirm and mark reviewed")
+    confirm_button.click().run()
+    assert not at.exception, at.exception
+
+    conn = connect(str(db_path))
+    events = load_match_events(conn, capture_id)
+    assert len(events) == 1
+    assert events[0]["event_type"] == "goal"
