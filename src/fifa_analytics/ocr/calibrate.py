@@ -142,17 +142,17 @@ if __name__ == "__main__":
     # on screen. Best-effort: never let an OCR error break the overlay write.
     if screen_type == "player_summary":
         try:
-            from fifa_analytics.ocr.extract import read_leftmost_number
+            from fifa_analytics.ocr.extract import read_number_column
             from fifa_analytics.ocr.preprocess import clean_for_ocr, crop_fractional
 
             fresh = cv2.imread(image_path)  # un-annotated copy to OCR
             r = regions.PLAYER_SUMMARY_REGIONS
-            rows = regions.even_rows(r["stat_list_box"], len(regions.PLAYER_SUMMARY_STAT_ORDER))
-            col_x1, col_x2 = r["stat_value_span"]
-            print("\nExtracted player values (leftmost number in each row's span):")
-            for stat_name, (x1, y1, x2, y2) in zip(regions.PLAYER_SUMMARY_STAT_ORDER, rows):
-                crop = crop_fractional(fresh, (col_x1, y1, col_x2, y2))
-                value, _ = read_leftmost_number(clean_for_ocr(crop))
+            x0, y0, x1, y1 = r["stat_list_box"]
+            col_x0, col_x1 = r["stat_value_span"]
+            strip = crop_fractional(fresh, (col_x0, y0, col_x1, y1))
+            values = read_number_column(clean_for_ocr(strip), len(regions.PLAYER_SUMMARY_STAT_ORDER))
+            print("\nExtracted player values (one OCR pass over the value column):")
+            for stat_name, (value, _conf) in zip(regions.PLAYER_SUMMARY_STAT_ORDER, values):
                 print(f"  {stat_name}: {value}")
             print("\nIf these match the LEFT column on screen, the box is good — "
                   "reprocess the match and they'll flow through. If a value is wrong, "

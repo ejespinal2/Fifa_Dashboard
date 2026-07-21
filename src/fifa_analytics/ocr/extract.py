@@ -165,3 +165,35 @@ def read_leftmost_number(crop: np.ndarray) -> tuple[float | None, float]:
         return None, 0.0
     leftmost = min(numeric, key=lambda f: f["x_left"])
     return parse_numeric(leftmost["text"]), leftmost["confidence"]
+
+
+def read_number_column(crop: np.ndarray, n_rows: int) -> list[tuple[float | None, float]]:
+    """OCR a tall crop that holds ONE number per row across n_rows evenly
+    spaced rows, and return [(value, confidence), ...] of length n_rows.
+
+    This exists because reading a stat column as 17 separate one-character
+    crops is unreliable -- each isolated tiny digit sits at EasyOCR's
+    detection floor, so some come back None or clipped seemingly at random.
+    Passing the whole column in one pass lets EasyOCR use the full context
+    (a vertical run of aligned numbers, which it reads far better) and
+    removes per-crop clipping entirely. Each detected fragment is mapped to
+    its row by vertical position; fragments sharing a row are concatenated
+    left-to-right (so a value OCR split into pieces, e.g. '1'+'00', rejoins
+    to 100); a row with nothing detected is (None, 0.0)."""
+    fragments = read_fragments(crop, allowlist=NUMERIC_ALLOWLIST)
+    by_row: dict[int, list[dict]] = {}
+    for fragment in fragments:
+        y_center = (fragment["y_top"] + fragment["y_bottom"]) / 2
+        row = min(n_rows - 1, max(0, int(y_center * n_rows)))
+        by_row.setdefault(row, []).append(fragment)
+
+    out: list[tuple[float | None, float]] = []
+    for row in range(n_rows):
+        row_fragments = sorted(by_row.get(row, []), key=lambda f: f["x_left"])
+        if not row_fragments:
+            out.append((None, 0.0))
+            continue
+        text = "".join(f["text"] for f in row_fragments)
+        confidence = sum(f["confidence"] for f in row_fragments) / len(row_fragments)
+        out.append((parse_numeric(text), confidence))
+    return out

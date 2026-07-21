@@ -14,6 +14,7 @@ from fifa_analytics.ocr.extract import (
     NUMERIC_ALLOWLIST,
     read_field,
     read_leftmost_number,
+    read_number_column,
     read_text,
 )
 
@@ -80,3 +81,25 @@ def test_read_leftmost_number_empty_when_no_numbers(monkeypatch):
     fake = _TwoNumberReader([])
     monkeypatch.setattr(extract, "_reader", lambda: fake)
     assert read_leftmost_number(np.zeros((10, 100), dtype=np.uint8)) == (None, 0.0)
+
+
+def _ybox(x_left, x_right, y_top, y_bottom):
+    return [[x_left, y_top], [x_right, y_top], [x_right, y_bottom], [x_left, y_bottom]]
+
+
+def test_read_number_column_maps_by_row_and_rejoins_split_values(monkeypatch):
+    # 4-row column, crop height 40. Row 0 = "0", row 1 = "100" (split into
+    # two fragments to prove they rejoin), row 2 = nothing (blank), row 3 =
+    # "5". Rows map by vertical center: int(y_center/H * n_rows).
+    results = [
+        (_ybox(10, 20, 2, 8), "0", 0.9),        # row 0
+        (_ybox(10, 18, 12, 18), "1", 0.9),      # row 1, left piece
+        (_ybox(18, 30, 12, 18), "00", 0.9),     # row 1, right piece
+        (_ybox(10, 20, 32, 38), "5", 0.9),      # row 3
+    ]
+    fake = _TwoNumberReader(results)
+    monkeypatch.setattr(extract, "_reader", lambda: fake)
+
+    values = read_number_column(np.zeros((40, 100), dtype=np.uint8), 4)
+    assert [v for v, _ in values] == [0.0, 100.0, None, 5.0]
+    assert fake.calls == [{"allowlist": NUMERIC_ALLOWLIST}]

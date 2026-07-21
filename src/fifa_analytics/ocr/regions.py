@@ -65,11 +65,12 @@ PLAYER_SUMMARY_REGIONS = {
     "active_player_name": (0.09, 0.185, 0.27, 0.29),
     # The full 17-row stat list on the right. Each row shows TWO numbers:
     # the player's own value (left) and the team value (right), with a wide
-    # empty gap between them. The vertical span is nudged up slightly (top
-    # 0.275 -> 0.270, bottom 0.885 -> 0.880) so each row's even-split crop
-    # centers on its digits rather than sitting a hair low, which was
-    # dropping some single-digit reads to None.
-    "stat_list_box": (0.663, 0.270, 0.955, 0.880),
+    # empty gap between them. The player values are read as one vertical
+    # strip in a single OCR pass (see extract.read_number_column), which is
+    # far more reliable than cropping and OCR'ing 17 one-character images
+    # separately -- so these y-bounds just have to span the list; a small
+    # offset no longer drops or clips individual rows.
+    "stat_list_box": (0.663, 0.275, 0.955, 0.885),
     "stat_list_row_count": len(PLAYER_SUMMARY_STAT_ORDER),
     # x-range over the PLAYER value column (the left of the two number
     # columns; the team value on the right is not needed). Narrowed down

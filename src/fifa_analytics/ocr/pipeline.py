@@ -66,7 +66,7 @@ from fifa_analytics.ocr.extract import (
     group_fragments_into_lines,
     read_field,
     read_fragments,
-    read_leftmost_number,
+    read_number_column,
     read_text,
 )
 from fifa_analytics.ocr.player_match import clean_ocr_name, match_player
@@ -169,6 +169,19 @@ def _split_row_value_cols(
     return out
 
 
+def _read_stat_column(image, stat_list_box, stat_order, col_box) -> dict[str, tuple[float | None, float]]:
+    """Read a whole value column in ONE OCR pass and map each number to its
+    stat by vertical position (extract.read_number_column). Far more
+    reliable for a column of small single-digit values than OCR'ing each
+    row's crop separately, which drops/clips isolated digits. col_box is
+    the value column's x-range; the strip's height spans stat_list_box."""
+    x0, y0, x1, y1 = stat_list_box
+    col_x0, col_x1 = col_box
+    strip = crop_fractional(image, (col_x0, y0, col_x1, y1))
+    values = read_number_column(clean_for_ocr(strip), len(stat_order))
+    return dict(zip(stat_order, values))
+
+
 def resolve_player(conn, ocr_name: str, team_id: int, candidates: list, csv_rows: list) -> tuple[int, str]:
     """candidates: this team's rows from players_for_teams (already filtered
     to team_id by the caller). Returns (player_id, confidence) where
@@ -251,12 +264,11 @@ def process_player_summary(
         content_hash=content_hash,
     )
 
-    stats = _split_row_value_cols(
+    stats = _read_stat_column(
         image,
         regions.PLAYER_SUMMARY_REGIONS["stat_list_box"],
         regions.PLAYER_SUMMARY_STAT_ORDER,
         regions.PLAYER_SUMMARY_REGIONS["stat_value_span"],
-        reader=read_leftmost_number,  # left number = the player's own value
     )
 
     # The in-game match rating ("Total Rating: 7.5") sits outside the stat
