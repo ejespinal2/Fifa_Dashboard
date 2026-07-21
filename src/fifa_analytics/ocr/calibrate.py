@@ -8,12 +8,14 @@ Usage:
     python -m fifa_analytics.ocr.calibrate player_gk path/to/screenshot.png
     python -m fifa_analytics.ocr.calibrate team_events path/to/screenshot.png
 
-The value-column crops OCR actually reads are drawn too (magenta = the
-first value column, cyan = the second where a screen has two). If a
-3-digit value like 100 comes out as 0, look at whether its digits sit
-fully inside that colored box or get clipped on the left edge — that
-clipping is the usual cause, and the fix is widening the matching
-stat_value_col_* range in regions.py.
+The value crops OCR actually reads are drawn too (magenta boxes). For
+player_summary that box should cover ONLY the player's value column (the
+left of the two number columns), sitting clear of both the stat labels on
+the left and the team value column on the right; the fix if it doesn't is
+the stat_value_span range in regions.py. On startup this prints where
+regions.py was loaded from and the span it will draw, so a stale install
+or an un-pulled checkout shows up in the terminal, not just as a
+wrong-looking overlay.
 
 team_summary expects the scrolled-up view (showing Possession %..Yellow
 Cards) — that's the one screenshot per team per match this pipeline uses.
@@ -105,6 +107,14 @@ if __name__ == "__main__":
         sys.exit(1)
 
     screen_type, image_path = sys.argv[1], sys.argv[2]
+
+    # Print the code being run and the coordinates it will draw, so a stale
+    # install or an un-pulled checkout is obvious from the terminal rather
+    # than only visible as a wrong-looking overlay.
+    print(f"regions.py loaded from: {regions.__file__}")
+    if screen_type == "player_summary":
+        print(f"player-summary value span (magenta box): {regions.PLAYER_SUMMARY_REGIONS['stat_value_span']}")
+
     image = cv2.imread(image_path)
     if image is None:
         print(f"Could not read image: {image_path}")
