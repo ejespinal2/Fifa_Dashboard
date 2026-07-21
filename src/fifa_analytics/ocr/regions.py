@@ -68,16 +68,16 @@ PLAYER_SUMMARY_REGIONS = {
     # empty gap between them.
     "stat_list_box": (0.663, 0.275, 0.955, 0.885),
     "stat_list_row_count": len(PLAYER_SUMMARY_STAT_ORDER),
-    # x-range over the PLAYER value column only (the left of the two number
-    # columns; the team value on the right is not needed). The pipeline
-    # takes the leftmost number in this span (extract.read_leftmost_number),
-    # so the box just has to cover the player column and stay out of both
-    # the stat labels (left) and the team column (right). The right edge
-    # (0.90) sits in the gap between the player and team columns, measured
-    # against a real 2000px capture (J. Oblak, Atlético) and confirmed on
-    # the calibration overlay. Earlier attempts failed by clipping a 3-digit
-    # value (100 -> 0) or landing in the empty gap and reading nothing.
-    "stat_value_span": (0.84, 0.90),
+    # x-range over the PLAYER value column (the left of the two number
+    # columns; the team value on the right is not needed). Narrowed down
+    # over several rounds against a real capture (J. Oblak, Atlético): both
+    # number columns are crammed into the right ~10% of the panel, so the
+    # player column sits around 0.90-0.93 with the team column right beside
+    # it. The pipeline takes the LEFTMOST number in this span
+    # (extract.read_leftmost_number), so if the team column's edge sneaks in
+    # on the right it's ignored; the box just has to cover the player column
+    # and clear the stat labels on the left.
+    "stat_value_span": (0.89, 0.93),
 }
 
 

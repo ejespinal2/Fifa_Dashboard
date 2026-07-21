@@ -135,3 +135,27 @@ if __name__ == "__main__":
     out_path = image_path.rsplit(".", 1)[0] + "_calibration.png"
     cv2.imwrite(out_path, image)
     print(f"Wrote {out_path} — open it and compare the boxes against the real fields.")
+
+    # For player_summary, also OCR and print the value each row actually
+    # extracts. The box is only a guide; THESE numbers are what the pipeline
+    # stores, so this is the real check -- compare them to the left column
+    # on screen. Best-effort: never let an OCR error break the overlay write.
+    if screen_type == "player_summary":
+        try:
+            from fifa_analytics.ocr.extract import read_leftmost_number
+            from fifa_analytics.ocr.preprocess import clean_for_ocr, crop_fractional
+
+            fresh = cv2.imread(image_path)  # un-annotated copy to OCR
+            r = regions.PLAYER_SUMMARY_REGIONS
+            rows = regions.even_rows(r["stat_list_box"], len(regions.PLAYER_SUMMARY_STAT_ORDER))
+            col_x1, col_x2 = r["stat_value_span"]
+            print("\nExtracted player values (leftmost number in each row's span):")
+            for stat_name, (x1, y1, x2, y2) in zip(regions.PLAYER_SUMMARY_STAT_ORDER, rows):
+                crop = crop_fractional(fresh, (col_x1, y1, col_x2, y2))
+                value, _ = read_leftmost_number(clean_for_ocr(crop))
+                print(f"  {stat_name}: {value}")
+            print("\nIf these match the LEFT column on screen, the box is good — "
+                  "reprocess the match and they'll flow through. If a value is wrong, "
+                  "tell me which stat and what it should be.")
+        except Exception as exc:  # pragma: no cover - depends on OCR model being present
+            print(f"(Could not OCR values to print: {exc})")
