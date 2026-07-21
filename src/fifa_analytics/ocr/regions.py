@@ -68,18 +68,18 @@ PLAYER_SUMMARY_REGIONS = {
     # empty gap between them.
     "stat_list_box": (0.663, 0.275, 0.955, 0.885),
     "stat_list_row_count": len(PLAYER_SUMMARY_STAT_ORDER),
-    # x-ranges for the two number columns. Corrected against a real 2000px
-    # capture (J. Oblak, Atlético): the player value right-aligns around
-    # x=0.815 and the team value around x=0.94, with empty space from ~0.82
-    # to ~0.91 between them. The OLD player box (0.885, 0.915) sat squarely
-    # in that gap, so it read nothing and every player stat came back blank
-    # (shown as 0) -- the "100 renders as 0" bug. The player box is
-    # deliberately a little wide on the left; read_field's numeric allowlist
-    # keeps any stat-label text that peeks in from corrupting the number.
-    # Only stat_value_col_player is read by the pipeline for this screen;
-    # stat_value_col_team is kept for reference/calibration.
-    "stat_value_col_player": (0.77, 0.83),
-    "stat_value_col_team": (0.908, 0.95),
+    # x-range covering BOTH number columns (player value on the left, team
+    # value on the right), not the label to their left. The pipeline reads
+    # this whole span and takes the LEFTMOST number as the player's value
+    # (see extract.read_leftmost_number) -- so this box only has to roughly
+    # cover the two columns, it does NOT have to pinpoint one column. Two
+    # earlier attempts at a pin-point player column failed: one clipped a
+    # 3-digit value like 100 down to 0, the other landed in the empty gap
+    # between the columns and read nothing (also 0). Measured against a real
+    # 2000px capture (J. Oblak, Atlético). Confirm with the calibration
+    # overlay: the magenta box should sit over both number columns and stay
+    # clear of the stat-label text on the left.
+    "stat_value_span": (0.84, 0.955),
 }
 
 

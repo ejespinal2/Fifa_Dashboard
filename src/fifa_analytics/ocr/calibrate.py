@@ -58,11 +58,14 @@ def calibrate_player_summary(image):
         regions.PLAYER_SUMMARY_STAT_ORDER, regions.even_rows(r["stat_list_box"], len(regions.PLAYER_SUMMARY_STAT_ORDER))
     ):
         _draw_box(image, row_box, name, color=(0, 165, 255))
-    # magenta = player value crop, cyan = team value crop — check a 3-digit
-    # row (passes) sits fully inside its box, not clipped on the left.
+    # magenta = the value span the pipeline reads. It should cover BOTH
+    # number columns (player value + team value) and stay clear of the stat
+    # labels on the left — the pipeline takes the leftmost number as the
+    # player's own value, so exact column placement inside the box doesn't
+    # matter, only that both columns fall inside it and no label text does.
     _draw_value_columns(
         image, r["stat_list_box"], regions.PLAYER_SUMMARY_STAT_ORDER,
-        [(*r["stat_value_col_player"], (255, 0, 255)), (*r["stat_value_col_team"], (255, 255, 0))],
+        [(*r["stat_value_span"], (255, 0, 255))],
     )
 
 

@@ -91,15 +91,17 @@ def group_fragments_into_lines(fragments: list[dict]) -> list[dict]:
     return out
 
 
-def read_fragments(crop: np.ndarray) -> list[dict]:
+def read_fragments(crop: np.ndarray, allowlist: str | None = None) -> list[dict]:
     """OCR a crop and return every raw text fragment with its position,
     all coordinates as fractions of the crop's size:
     [{text, confidence, x_left, x_right, y_top, y_bottom}]. This is the
     input for layout-aware parsing (e.g. the Events tab's center-spine
-    rows, where WHERE a fragment sits decides which team it belongs to)."""
+    rows, where WHERE a fragment sits decides which team it belongs to).
+    Pass allowlist for a crop known to hold only those characters."""
     if crop is None or crop.size == 0:
         return []
-    results = _reader().readtext(crop, detail=1, paragraph=False)
+    kwargs = {"allowlist": allowlist} if allowlist else {}
+    results = _reader().readtext(crop, detail=1, paragraph=False, **kwargs)
     height, width = crop.shape[0], crop.shape[1]
     return [
         {
@@ -143,3 +145,23 @@ def read_field(crop: np.ndarray) -> tuple[float | None, float]:
     confusions (0/O, 1/I, 8/B, 5/S) a full-alphabet read is prone to."""
     raw_text, confidence = read_text(crop, allowlist=NUMERIC_ALLOWLIST)
     return parse_numeric(raw_text), confidence
+
+
+def read_leftmost_number(crop: np.ndarray) -> tuple[float | None, float]:
+    """For a crop that spans BOTH number columns of a player-summary stat
+    row (the player's own value on the left, the team value on the right),
+    return the LEFTMOST number -- always the player's own value. This is
+    deliberately robust to the exact column x-position: rather than trying
+    to crop a pin-point column (which kept landing in the gap or clipping a
+    3-digit value like 100 down to 0), it reads the whole value area and
+    picks the left number by position, so the box only has to roughly cover
+    the two columns, not hit one column exactly. NUMERIC_ALLOWLIST keeps
+    any stat-label text that peeks in from being read as a stray number."""
+    numeric = [
+        f for f in read_fragments(crop, allowlist=NUMERIC_ALLOWLIST)
+        if parse_numeric(f["text"]) is not None
+    ]
+    if not numeric:
+        return None, 0.0
+    leftmost = min(numeric, key=lambda f: f["x_left"])
+    return parse_numeric(leftmost["text"]), leftmost["confidence"]

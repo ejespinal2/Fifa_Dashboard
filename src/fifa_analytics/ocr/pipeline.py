@@ -62,7 +62,13 @@ from fifa_analytics.db.models import (
 )
 from fifa_analytics.ocr import regions
 from fifa_analytics.ocr.event_parse import classify_event_icon, parse_event_rows
-from fifa_analytics.ocr.extract import group_fragments_into_lines, read_field, read_fragments, read_text
+from fifa_analytics.ocr.extract import (
+    group_fragments_into_lines,
+    read_field,
+    read_fragments,
+    read_leftmost_number,
+    read_text,
+)
 from fifa_analytics.ocr.player_match import clean_ocr_name, match_player
 from fifa_analytics.ocr.preprocess import clean_for_ocr, crop_fractional
 from fifa_analytics.ocr.team_match import match_team_header
@@ -141,8 +147,16 @@ def _hash_unless_duplicate(conn, match_id: int, image_path: str) -> str | None:
 
 
 def _split_row_value_cols(
-    image, stat_list_box, stat_order, col_box
+    image, stat_list_box, stat_order, col_box, reader=None
 ) -> dict[str, tuple[float | None, float]]:
+    """Crop each stat row down to col_box's x-range and read a number from
+    it. reader is how that number is pulled out: read_field (the default)
+    for a crop holding a single value column, or read_leftmost_number for a
+    crop spanning two columns where the player's value is the left one.
+    Defaults to None (not read_field itself) so a test monkeypatching
+    pipeline.read_field is still honored — a default of read_field would
+    bind the original function at definition time."""
+    reader = reader or read_field
     rows = regions.even_rows(stat_list_box, len(stat_order))
     out = {}
     for stat_name, row_box in zip(stat_order, rows):
@@ -151,7 +165,7 @@ def _split_row_value_cols(
         field_box = (col_x1, y1, col_x2, y2)
         crop = crop_fractional(image, field_box)
         cleaned = clean_for_ocr(crop)
-        out[stat_name] = read_field(cleaned)
+        out[stat_name] = reader(cleaned)
     return out
 
 
@@ -241,7 +255,8 @@ def process_player_summary(
         image,
         regions.PLAYER_SUMMARY_REGIONS["stat_list_box"],
         regions.PLAYER_SUMMARY_STAT_ORDER,
-        regions.PLAYER_SUMMARY_REGIONS["stat_value_col_player"],
+        regions.PLAYER_SUMMARY_REGIONS["stat_value_span"],
+        reader=read_leftmost_number,  # left number = the player's own value
     )
 
     # The in-game match rating ("Total Rating: 7.5") sits outside the stat
