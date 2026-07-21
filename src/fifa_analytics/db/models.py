@@ -367,6 +367,32 @@ def create_match_event(
     return cur.lastrowid
 
 
+def load_match_events(conn: sqlite3.Connection, capture_id: int) -> list[sqlite3.Row]:
+    """Every event OCR stored from one team_events capture, for review-UI
+    editing — a misclassified icon (e.g. a goal read as 'unknown'), a
+    misread minute, or a row OCR missed or invented entirely are all
+    fixable here before a recompute."""
+    return conn.execute(
+        """SELECT event_id, player_id, team_id, minute, event_type
+           FROM match_events WHERE capture_id = ? ORDER BY minute IS NULL, minute""",
+        (capture_id,),
+    ).fetchall()
+
+
+def replace_match_events(conn: sqlite3.Connection, capture_id: int, match_id: int, rows: list[dict]) -> None:
+    """Rewrites every event tied to this capture to exactly match the
+    reviewer's edits: wrong types, misread minutes, deleted false
+    positives, and added rows OCR never parsed all persist this way.
+    rows: [{player_id, team_id, minute, event_type}, ...]."""
+    conn.execute("DELETE FROM match_events WHERE capture_id = ?", (capture_id,))
+    conn.executemany(
+        """INSERT INTO match_events (match_id, capture_id, team_id, player_id, minute, event_type)
+           VALUES (?, ?, ?, ?, ?, ?)""",
+        [(match_id, capture_id, r["team_id"], r["player_id"], r["minute"], r["event_type"]) for r in rows],
+    )
+    conn.commit()
+
+
 def clear_scouting_candidates(conn: sqlite3.Connection, source: str) -> None:
     """Scouting candidates are a refreshable snapshot, not user-owned data
     (unlike players) -- re-importing wipes the previous snapshot for that

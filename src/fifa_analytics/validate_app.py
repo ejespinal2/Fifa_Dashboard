@@ -11,7 +11,22 @@ from datetime import datetime, timezone
 
 import streamlit as st
 
-from fifa_analytics.db.models import connect, mark_reviewed, players_for_teams
+from fifa_analytics.db.models import (
+    connect,
+    load_match_events,
+    mark_reviewed,
+    players_for_teams,
+    replace_match_events,
+)
+
+# Every event_type classify_event_icon or the structural sub-detector can
+# produce, plus "unknown" (icon classification gave up) -- the review UI
+# lets a reviewer retype any of these, not just the ones OCR happened to
+# get right.
+EVENT_TYPES = [
+    "goal", "penalty_goal", "missed_penalty", "yellow_card", "red_card",
+    "sub_on", "sub_off", "unknown",
+]
 
 
 def get_db_path() -> str:
@@ -114,7 +129,58 @@ def main():
                 st.info(note)
 
         if capture["capture_type"] == "team_events":
-            st.text_area("Raw OCR text (not yet parsed into structured events)", capture["raw_text"] or "", height=150)
+            st.text_area("Raw OCR text", capture["raw_text"] or "", height=100)
+
+            home_id, away_id = load_match_team_ids(conn, capture["match_id"])
+            roster = players_for_teams(conn, [home_id, away_id])
+            name_by_player_id = {c["player_id"]: c["name"] for c in roster}
+            roster_lookup = {c["name"]: (c["player_id"], c["team_id"]) for c in roster}
+            roster_names = sorted(roster_lookup)
+            delete_marker = "-- delete this row --"
+            skip_marker = "-- select --"
+
+            st.caption(
+                "Fix whatever OCR got wrong before confirming: retype an 'unknown' "
+                "icon, correct a misread minute, pick delete to drop a row, or add "
+                "one below for an event OCR missed entirely."
+            )
+
+            events = load_match_events(conn, capture["capture_id"])
+            row_inputs = []
+            for row in events:
+                event_key = f"{capture['capture_id']}_event_{row['event_id']}"
+                default_name = name_by_player_id.get(row["player_id"], delete_marker)
+                options = [delete_marker] + roster_names
+                p_col, m_col, t_col = st.columns([2, 1, 2])
+                player_choice = p_col.selectbox(
+                    "player", options,
+                    index=options.index(default_name) if default_name in options else 0,
+                    key=f"{event_key}_player",
+                )
+                minute = m_col.number_input(
+                    "minute", min_value=0, max_value=120,
+                    value=row["minute"] if row["minute"] is not None else 0,
+                    key=f"{event_key}_minute",
+                )
+                default_type = row["event_type"] if row["event_type"] in EVENT_TYPES else "unknown"
+                event_type = t_col.selectbox(
+                    "event_type", EVENT_TYPES, index=EVENT_TYPES.index(default_type), key=f"{event_key}_type",
+                )
+                row_inputs.append((player_choice, minute, event_type, delete_marker))
+
+            extra_key = f"{capture['capture_id']}_extra_event_rows"
+            extra_rows = st.session_state.get(extra_key, 0)
+            for i in range(extra_rows):
+                new_key = f"{capture['capture_id']}_new_event_{i}"
+                p_col, m_col, t_col = st.columns([2, 1, 2])
+                player_choice = p_col.selectbox("player", [skip_marker] + roster_names, key=f"{new_key}_player")
+                minute = m_col.number_input("minute", min_value=0, max_value=120, value=0, key=f"{new_key}_minute")
+                event_type = t_col.selectbox("event_type", EVENT_TYPES, key=f"{new_key}_type")
+                row_inputs.append((player_choice, minute, event_type, skip_marker))
+
+            if st.button("+ Add another event", key=f"{capture['capture_id']}_add_event"):
+                st.session_state[extra_key] = extra_rows + 1
+                st.rerun()
         else:
             rows = load_stat_values(conn, capture["capture_id"])
             edited = {}
@@ -136,7 +202,17 @@ def main():
                 candidates = players_for_teams(conn, [home_id, away_id])
                 team_id = next(c["team_id"] for c in candidates if c["player_id"] == selected_player_id)
                 assign_player(conn, capture["capture_id"], selected_player_id, team_id)
-            if capture["capture_type"] != "team_events":
+            if capture["capture_type"] == "team_events":
+                new_rows = []
+                for player_choice, minute, event_type, skip_value in row_inputs:
+                    if player_choice == skip_value:  # deleted, or an unfilled add-row -- drop it
+                        continue
+                    player_id, team_id = roster_lookup[player_choice]
+                    new_rows.append(
+                        {"player_id": player_id, "team_id": team_id, "minute": int(minute), "event_type": event_type}
+                    )
+                replace_match_events(conn, capture["capture_id"], capture["match_id"], new_rows)
+            else:
                 for stat_name, value in edited.items():
                     conn.execute(
                         "UPDATE match_stat_values SET stat_value = ? WHERE capture_id = ? AND stat_name = ?",

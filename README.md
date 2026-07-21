@@ -108,12 +108,16 @@ Read-only Streamlit views over everything Phases 1-4 compute, one tab each
   writers racing the same database. A per-fixture lock file
   (`data/.ocr_locks/`, gitignored) now rejects a second concurrent run for
   the same fixture with a clear message instead of silently double-running
-  — but the fix is not clicking twice, not a safety net to lean on. Two
-  things that help the real wait: a CUDA GPU is auto-detected and used if
-  present (3-5x faster; `FIFA_OCR_GPU=0` forces CPU if a detected GPU
-  misbehaves), and re-running Process after adding a couple of forgotten
-  screenshots only OCRs the new ones — everything already processed is
-  hash-skipped instantly.
+  — but the fix is not clicking twice, not a safety net to lean on.
+  GPU use is **opt-in** (`FIFA_OCR_GPU=1`), not auto-detected: a real run
+  got measurably slower, not faster, from an earlier version of this that
+  auto-detected and used any CUDA GPU it found — every OCR call here reads
+  one small, independent crop at a time, never batched, so a GPU's fixed
+  per-call overhead loses to plain CPU at that size. Leave it off unless
+  you've actually measured GPU being faster for this on your machine.
+  Re-running Process after adding a couple of forgotten screenshots only
+  OCRs the new ones — everything already processed is hash-skipped
+  instantly.
 - **Screenshot filenames are optional.** Reserved names (`team_summary`,
   `team_events`, `team_events_2`…, `player_summary_*`, `player_gk_*`) are
   routed by name, exactly as always — and any *other* image in the folder
@@ -160,7 +164,12 @@ Design decisions worth knowing:
   Manage write only on explicit button clicks, through the same helpers in
   `db/models.py` the CLIs use. Per-stat OCR corrections deliberately stay
   in `validate_app.py`, which remains the trust gate for model inputs —
-  the analysis tabs still only reflect reviewed data.
+  the analysis tabs still only reflect reviewed data. `team_events`
+  captures get the same treatment as stats: a per-row editor (player,
+  minute, event type) lets a reviewer retype a misclassified icon, fix a
+  minute, delete a false positive, or add a row for an event OCR missed —
+  confirming rewrites that capture's `match_events` rows to match exactly
+  what's shown.
 - The app runs `init_db` at startup (idempotent), so schema migrations —
   like the `matches.competition` column the schedule needs — apply
   automatically when you pull an update.
@@ -432,9 +441,14 @@ snapshot, never hand-edited data like your players/matches).
     symmetric diagonals vs. a ✓'s asymmetric single stroke). Against the
     same real match, 2 of 3 ball icons classified correctly (a goal and
     the missed penalty); one plain goal still came back `unknown` —
-    **unresolved**, and deliberately not guessed at again without more
-    evidence; if it recurs, the fix needs the actual screenshot to
-    measure against, not another blind threshold tweak.
+    left unresolved rather than guessed at again without more evidence.
+    `validate_app.py` now has an events editor for exactly this: retype
+    the `unknown` row (or any other), fix a misread minute, delete a
+    false positive, or add a row for an event OCR missed entirely, all
+    before a recompute. The pixel threshold itself is still unfixed and
+    would need a real screenshot to recalibrate against — the editor is
+    the practical fix in the meantime, not a substitute for eventually
+    finding the root cause.
   - A two-digit minute ("90'") can arrive from EasyOCR as two separate
     fragments ("9" + "0'"), silently truncating to minute 9 if only the
     first is used — confirmed on a real capture. Fixed by concatenating

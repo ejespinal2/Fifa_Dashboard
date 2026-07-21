@@ -8,18 +8,14 @@ import numpy as np
 
 
 def _gpu_available() -> bool:
-    """CUDA availability, off by one env var (FIFA_OCR_GPU=0 forces CPU —
-    useful if a GPU is present but flaky/out of VRAM for EasyOCR's model).
-    Import errors mean no usable torch+CUDA build; treated as no GPU rather
-    than raised, since this only gates a speed optimization."""
-    if os.environ.get("FIFA_OCR_GPU") == "0":
-        return False
-    try:
-        import torch
-
-        return torch.cuda.is_available()
-    except Exception:
-        return False
+    """GPU use is opt-in (FIFA_OCR_GPU=1), not auto-detected. A real 40-image
+    run got measurably SLOWER after this used to auto-detect and use any
+    CUDA GPU it found: every call here is one small, independent crop (a
+    single stat field, a single name) OCR'd one at a time, never batched --
+    a GPU's fixed per-call transfer/kernel-launch overhead dominates at
+    that size and loses to plain CPU, it doesn't win. Set FIFA_OCR_GPU=1 to
+    try GPU anyway; anything else (unset, "0", etc.) stays on CPU."""
+    return os.environ.get("FIFA_OCR_GPU") == "1"
 
 
 @lru_cache(maxsize=1)
@@ -28,7 +24,7 @@ def _reader():
 
     use_gpu = _gpu_available()
     print(f"EasyOCR: using {'GPU' if use_gpu else 'CPU'} "
-          f"({'set FIFA_OCR_GPU=0 to force CPU' if use_gpu else 'a CUDA GPU speeds this up 3-5x if you have one'})")
+          f"({'FIFA_OCR_GPU=1 set' if use_gpu else 'set FIFA_OCR_GPU=1 to try GPU instead'})")
     return easyocr.Reader(["en"], gpu=use_gpu)
 
 

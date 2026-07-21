@@ -2,6 +2,7 @@ __pycache__/
 *.pyc
 .venv/
 venv/
+*.egg-info/
 
 # Local data — never commit real screenshots or the database
 data/fifa.db
