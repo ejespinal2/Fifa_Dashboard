@@ -68,18 +68,16 @@ PLAYER_SUMMARY_REGIONS = {
     # empty gap between them.
     "stat_list_box": (0.663, 0.275, 0.955, 0.885),
     "stat_list_row_count": len(PLAYER_SUMMARY_STAT_ORDER),
-    # x-range covering BOTH number columns (player value on the left, team
-    # value on the right), not the label to their left. The pipeline reads
-    # this whole span and takes the LEFTMOST number as the player's value
-    # (see extract.read_leftmost_number) -- so this box only has to roughly
-    # cover the two columns, it does NOT have to pinpoint one column. Two
-    # earlier attempts at a pin-point player column failed: one clipped a
-    # 3-digit value like 100 down to 0, the other landed in the empty gap
-    # between the columns and read nothing (also 0). Measured against a real
-    # 2000px capture (J. Oblak, Atlético). Confirm with the calibration
-    # overlay: the magenta box should sit over both number columns and stay
-    # clear of the stat-label text on the left.
-    "stat_value_span": (0.84, 0.955),
+    # x-range over the PLAYER value column only (the left of the two number
+    # columns; the team value on the right is not needed). The pipeline
+    # takes the leftmost number in this span (extract.read_leftmost_number),
+    # so the box just has to cover the player column and stay out of both
+    # the stat labels (left) and the team column (right). The right edge
+    # (0.90) sits in the gap between the player and team columns, measured
+    # against a real 2000px capture (J. Oblak, Atlético) and confirmed on
+    # the calibration overlay. Earlier attempts failed by clipping a 3-digit
+    # value (100 -> 0) or landing in the empty gap and reading nothing.
+    "stat_value_span": (0.84, 0.90),
 }
 
 
