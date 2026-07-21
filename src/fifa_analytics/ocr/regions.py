@@ -63,13 +63,23 @@ PLAYER_SUMMARY_REGIONS = {
     # "Aurelien Tchouameni 7.5". (clean_ocr_name also strips digit tokens
     # as a second line of defense.)
     "active_player_name": (0.09, 0.185, 0.27, 0.29),
-    # The full 17-row stat list on the right. Column split below handles
-    # "player value" vs. "team value" — both appear on every row here.
+    # The full 17-row stat list on the right. Each row shows TWO numbers:
+    # the player's own value (left) and the team value (right), with a wide
+    # empty gap between them.
     "stat_list_box": (0.663, 0.275, 0.955, 0.885),
     "stat_list_row_count": len(PLAYER_SUMMARY_STAT_ORDER),
-    # Within each row band, x-ranges for the two number columns
-    "stat_value_col_player": (0.885, 0.915),
-    "stat_value_col_team": (0.915, 0.955),
+    # x-ranges for the two number columns. Corrected against a real 2000px
+    # capture (J. Oblak, Atlético): the player value right-aligns around
+    # x=0.815 and the team value around x=0.94, with empty space from ~0.82
+    # to ~0.91 between them. The OLD player box (0.885, 0.915) sat squarely
+    # in that gap, so it read nothing and every player stat came back blank
+    # (shown as 0) -- the "100 renders as 0" bug. The player box is
+    # deliberately a little wide on the left; read_field's numeric allowlist
+    # keeps any stat-label text that peeks in from corrupting the number.
+    # Only stat_value_col_player is read by the pipeline for this screen;
+    # stat_value_col_team is kept for reference/calibration.
+    "stat_value_col_player": (0.77, 0.83),
+    "stat_value_col_team": (0.908, 0.95),
 }
 
 
