@@ -8,17 +8,26 @@ Atlético 0:2 Man Utd, three scrolled captures):
 - The HOME team's events extend LEFT of the spine, the AWAY team's RIGHT —
   matching the header's "HOME score : score AWAY" order. The side a name
   sits on is therefore the team attribution.
-- The event icon (ball / ball-with-X / card / sub arrow) sits between the
-  spine and the player's face photo, in a narrow x-band per side.
-- Substitutions carry TWO names: the player coming on next to the minute
-  (green up-arrow) and the player going off on a separate line just below
-  (red down-arrow) — parsed as sub_on and sub_off events.
+- A goal/card/missed-penalty icon sits between the spine and the scoring
+  player's face photo, in a narrow x-band per side.
+- Substitutions are the one case with NO icon in that zone at all — the
+  "icon" is a pair of tiny green up / red down chevrons printed directly
+  beside the NAMES themselves (too small and mis-positioned for the
+  goal/card icon zone to ever catch), and the outgoing player is a
+  separate, smaller line hanging just below the row. Because of that,
+  substitutions are detected STRUCTURALLY, not by icon color: any row
+  with a name-only line hanging below it IS a substitution, full stop —
+  parsed as sub_on (the row's primary name) + sub_off (the hanging name).
+  This is what parse_event_rows' sub_off_name field means; the pipeline
+  checks it BEFORE ever looking at icon color for a row.
 
 Card icon colors are EA's standard color-coding; a real red/yellow card
 screenshot hasn't been through yet, so treat those as plausible-but-
-unverified. Goal vs missed penalty is shape-discriminated (both icons are
-white): the missed-penalty ball has an X beside/through it, making the
-white blob visibly wider than tall.
+unverified. Goal vs missed penalty: both are a similarly-sized white ball
+icon (an earlier "wider blob" shape assumption was wrong — the missed-
+penalty mark does not extend the icon's width), discriminated instead by
+how much dark/black pixel area sits inside the same-sized ball crop (the
+X/check mark adds noticeably more dark area than a plain ball's stitching).
 """
 
 import re
@@ -52,8 +61,14 @@ MINUTE_RE = re.compile(r"^(\d{1,3})(?:\s*\+\s*(\d{1,2}))?\s*['\"`]?$")
 SPINE_ZONE = (0.40, 0.60)
 
 # A sub's outgoing player is printed on its own line just below the event
-# row; anything further below than this many row-heights is a different row.
-SUB_OFF_MAX_GAP_ROWS = 1.6
+# row. Gated on an ABSOLUTE fraction of the band's height, not a multiple of
+# the row's own OCR'd text bbox height: text-only bounding boxes are small
+# and inconsistent (a lone minute+name line reads much shorter than the
+# full photo-height row it visually belongs to), so a relative multiplier
+# undershot the real gap on real screenshots and silently dropped every
+# outgoing name. The row spacing between DIFFERENT events is comfortably
+# larger than this on every real capture seen so far.
+SUB_OFF_MAX_GAP_FRACTION = 0.08
 
 
 def parse_minute(text: str) -> int | None:
@@ -115,8 +130,7 @@ def parse_event_rows(fragments: list[dict]) -> list[dict]:
                     f for f in line
                     if (f["x_right"] <= minute_x(event) if event["side"] == "home" else f["x_left"] >= minute_x(event))
                 ]
-                row_height = event["y_bottom"] - event["y_top"] or 0.03
-                close_below = 0 <= y_top - event["y_bottom"] <= SUB_OFF_MAX_GAP_ROWS * row_height
+                close_below = 0 <= y_top - event["y_bottom"] <= SUB_OFF_MAX_GAP_FRACTION
                 if same_side and close_below:
                     event["sub_off_name"] = _name_of(same_side)
             continue
@@ -155,10 +169,20 @@ def minute_x(event: dict) -> float:
 # noise (stadium lights, kit colors) bleeding through the dark overlay.
 MIN_ICON_PIXEL_FRACTION = 0.03
 
+# Within a ball-colored (white-dominant) icon crop, this much of the crop
+# being dark/black means it's not a plain ball — a missed-penalty or
+# converted-penalty mark adds noticeably more dark ink than a ball's own
+# stitching detail does. A first cut, not yet confirmed against a real
+# converted-penalty capture (see module docstring) — recalibrate against
+# real Match Facts output if goal vs missed_penalty comes out wrong.
+PENALTY_MARK_DARK_FRACTION = 0.12
+
 
 def classify_event_icon(icon_crop: np.ndarray) -> str:
-    """Returns "goal" (achromatic white ball icon), "yellow_card",
-    "red_card", or "unknown".
+    """Returns "goal", "missed_penalty", "penalty_goal" (converted penalty),
+    "yellow_card", "red_card", or "unknown". Never returns "substitution" —
+    subs are detected structurally (see module docstring), never by icon
+    color, so this function is only ever called for non-sub rows.
 
     Counts pixels per color class rather than averaging color over all
     bright pixels: a real run showed the mean-based approach getting washed
@@ -179,83 +203,61 @@ def classify_event_icon(icon_crop: np.ndarray) -> str:
     white = (sat < 60) & (val > 150)
     yellow = (hue >= 15) & (hue <= 40) & (sat > 100) & (val > 100)
     red = ((hue <= 10) | (hue >= 170)) & (sat > 100) & (val > 100)
-    green = (hue >= 40) & (hue <= 85) & (sat > 100) & (val > 100)
+    dark = val < 80
 
     total_pixels = icon_crop.shape[0] * icon_crop.shape[1]
     threshold = MIN_ICON_PIXEL_FRACTION * total_pixels
-    # Substitutions are checked first: EA's sub icon is a green+red arrow
-    # pair, so its red pixels would otherwise win as "red_card". Any real
-    # amount of icon-green means sub — no card or ball icon contains green.
-    if int(np.count_nonzero(green)) >= threshold:
-        return "substitution"
-
-    white_count = int(np.count_nonzero(white))
-    red_count = int(np.count_nonzero(red))
-    # Missed penalty, colored-X variant: real white (the ball) AND a
-    # smaller-but-real amount of red (an X stroke, thinner than a solid
-    # card, hence the halved bar).
-    if white_count >= threshold and red_count >= 0.5 * threshold:
-        return "missed_penalty"
 
     counts = {
-        "goal": white_count,
+        "goal": int(np.count_nonzero(white)),
         "yellow_card": int(np.count_nonzero(yellow)),
-        "red_card": red_count,
+        "red_card": int(np.count_nonzero(red)),
     }
     best = max(counts, key=counts.get)
     if counts[best] < threshold:
         return "unknown"
-    if best == "goal" and _white_blob_is_wide(white):
-        # A penalty icon: the ball with a glyph beside it (all white in the
-        # real UI), making the blob clearly wider than a round goal ball.
-        # ✗ = missed penalty, ✓ = converted penalty — told apart by the
-        # glyph's top corners.
-        return _classify_penalty_glyph(white)
-    return best
+    if best != "goal":
+        return best
+
+    # A ball-shaped icon: goal, missed penalty, or converted penalty all
+    # look alike in color (white-dominant), same size — only the amount of
+    # dark ink inside the ball itself tells them apart. Restricted to an
+    # ellipse inscribed in the white blob's bounding box, not the raw box:
+    # a circle's bounding SQUARE always has non-circular corners outside
+    # the disk, which are background-dark by construction (nothing to do
+    # with any drawn mark) — counting those inflated every ball's "dark
+    # fraction" regardless of whether it actually carried a mark.
+    ys, xs = np.nonzero(white)
+    box_dark = dark[ys.min(): ys.max() + 1, xs.min(): xs.max() + 1]
+    height, width = box_dark.shape
+    row_grid, col_grid = np.ogrid[:height, :width]
+    center_y, center_x = (height - 1) / 2, (width - 1) / 2
+    ellipse = ((row_grid - center_y) / max(center_y, 1)) ** 2 + ((col_grid - center_x) / max(center_x, 1)) ** 2 <= 1.0
+    marked = box_dark & ellipse
+    ellipse_area = np.count_nonzero(ellipse)
+    dark_fraction = float(np.count_nonzero(marked)) / ellipse_area if ellipse_area else 0.0
+    if dark_fraction < PENALTY_MARK_DARK_FRACTION:
+        return "goal"
+    return _classify_penalty_mark(marked)
 
 
-# A goal ball's white bounding box is ~square; the ball+glyph penalty icons
-# measure ~1.5-2x wider. Split the difference.
-MISSED_PEN_MIN_ASPECT = 1.3
-
-
-def _white_blob_is_wide(white_mask: np.ndarray) -> bool:
-    ys, xs = np.nonzero(white_mask)
+def _classify_penalty_mark(marked: np.ndarray) -> str:
+    """Distinguishes the ✗ (missed) from the ✓ (converted) mark within a
+    ball icon already known to carry extra dark ink (marked: dark pixels,
+    already restricted to the ball's disk — see classify_event_icon): an
+    ✗ is symmetric (both top corners of its own dark region roughly
+    equally dark), a ✓'s long stroke rises through the top-right while its
+    top-left stays comparatively clear. Ambiguous cases default to
+    missed_penalty — the variant confirmed against a real screenshot;
+    unverified until a real converted-penalty capture goes through (see
+    module docstring)."""
+    ys, xs = np.nonzero(marked)
     if len(xs) == 0:
-        return False
-    width = xs.max() - xs.min() + 1
-    height = ys.max() - ys.min() + 1
-    return height > 0 and (width / height) >= MISSED_PEN_MIN_ASPECT
-
-
-def _classify_penalty_glyph(white_mask: np.ndarray) -> str:
-    """The wide white blob is ball + glyph. The ball is the densest
-    ~square window of columns; the glyph is what's left beside it. An ✗
-    (missed penalty) fills BOTH top corners of its own box — a ✓
-    (converted penalty) leaves the top-left empty, its long arm rising to
-    the top-right. Ambiguous shapes default to missed_penalty (the variant
-    confirmed against a real screenshot)."""
-    ys, xs = np.nonzero(white_mask)
-    box = white_mask[ys.min(): ys.max() + 1, xs.min(): xs.max() + 1]
-    height, width = box.shape
-    window = max(1, min(height, width - 1))
-
-    column_sums = box.sum(axis=0)
-    best_start = max(
-        range(width - window + 1),
-        key=lambda s: int(column_sums[s: s + window].sum()),
-    )
-    left_part = box[:, :best_start]
-    right_part = box[:, best_start + window:]
-    glyph = left_part if left_part.shape[1] >= right_part.shape[1] else right_part
-    gys, gxs = np.nonzero(glyph)
-    if len(gxs) == 0:
         return "missed_penalty"
-    glyph = glyph[gys.min(): gys.max() + 1, gxs.min(): gxs.max() + 1]
-
-    mid_y, mid_x = glyph.shape[0] // 2, glyph.shape[1] // 2
-    top_left = int(np.count_nonzero(glyph[:mid_y, :mid_x]))
-    top_right = int(np.count_nonzero(glyph[:mid_y, mid_x:]))
+    mark = marked[ys.min(): ys.max() + 1, xs.min(): xs.max() + 1]
+    mid_y, mid_x = mark.shape[0] // 2, mark.shape[1] // 2
+    top_left = int(np.count_nonzero(mark[:mid_y, :mid_x]))
+    top_right = int(np.count_nonzero(mark[:mid_y, mid_x:]))
     if top_right > 0 and top_left <= 0.4 * top_right:
         return "penalty_goal"
     return "missed_penalty"

@@ -404,21 +404,34 @@ snapshot, never hand-edited data like your players/matches).
   layout calibrated against real multi-event captures.** The Events tab
   lays events out on a center spine — minute circles in the middle, the
   HOME team's events extending left and the AWAY team's right (matching
-  the header order), so the side a name sits on IS its team. Every row
-  becomes a structured `match_events` entry with its icon classified from
-  that side's icon zone at the row's own height: `goal` (white ball),
-  `missed_penalty` (ball with an ✗) and `penalty_goal` (ball with a ✓ —
-  a converted penalty): both are all white in the real UI, so a wide
-  white blob marks a penalty icon and the glyph's top corners tell ✗
-  (both filled) from ✓ (top-left empty); a red-X color variant also
-  reads as missed, `yellow_card`/`red_card` (EA's color-coding —
-  still unverified against a real card capture), and substitutions, which
-  store TWO events: `sub_on` (the entering player, named at the minute)
-  and `sub_off` (the outgoing player, from the hanging line below). 'HT'
-  markers and scroll arrows are skipped. Capture a long list in scrolled
-  sections (`team_events.png`, `team_events_2.png`, ... or unrenamed —
-  auto-classification catches them); overlapping rows dedupe on (player,
-  minute, type). Raw text is always kept per capture regardless.
+  the header order), so the side a name sits on IS its team.
+  - **Substitutions are detected STRUCTURALLY, not by icon color.** A real
+    capture showed the sub "icon" is actually a pair of tiny green-up /
+    red-down chevrons printed directly beside the NAMES — too small and
+    wrongly positioned for a fixed icon zone to ever reliably catch. So a
+    row with a name hanging just below it is treated as a substitution
+    outright: `sub_on` (the row's own name) + `sub_off` (the hanging
+    name), regardless of what any icon check would say. This also fixed a
+    real bug where the outgoing player was being silently dropped even
+    when correctly read, because the old code only used it after an icon
+    check that never fired correctly.
+  - **Every other row** gets its icon classified from that side's icon
+    zone at the row's own height: `goal` (white ball), `yellow_card` /
+    `red_card` (EA's color-coding — still unverified against a real card
+    capture), or a penalty outcome. Goal vs. `missed_penalty` (✗) vs.
+    `penalty_goal` (✓, converted): a real capture showed these are the
+    *same-sized* ball icon with different ink inside it, not a wider
+    "ball + separate glyph" shape as first assumed — discriminated by how
+    much dark pixel area sits inside the ball's own disk (an ✗'s two
+    symmetric diagonals vs. a ✓'s asymmetric single stroke). **This
+    specific threshold is a best-effort first cut** — recalibrate against
+    real Match Facts output if a plain goal, a missed penalty, or a
+    converted penalty comes out misclassified.
+  - 'HT' markers and scroll arrows are skipped. Capture a long list in
+    scrolled sections (`team_events.png`, `team_events_2.png`, ... or
+    unrenamed — auto-classification catches them); overlapping rows
+    dedupe on (player, minute, type). Raw text is always kept per capture
+    regardless.
 - **No xA (expected assists) field exists on any captured screen** — if
   expected-assist over/underperformance matters to the model, it isn't coming from
   OCR and would need another source or to be dropped.

@@ -2,9 +2,16 @@
 built to the REAL layout (calibrated from the Atlético 0:2 Man Utd
 captures): minute circles on a center spine, home events left / away
 events right, icons in the per-side zones, hanging outgoing-sub names.
-OCR text is stubbed (EasyOCR's accuracy is its own concern); geometry,
-icon color/shape classification, side->team attribution, roster matching,
-and cross-screenshot dedupe all run for real on real pixels."""
+
+Substitutions are detected STRUCTURALLY (a name hanging below the row),
+never by icon color -- real screenshots showed the sub "icon" is actually
+tiny chevrons printed next to the names, not anything in the goal/card icon
+zone. So no icon is drawn for the sub row at all here; only its hanging
+sub_off name (via the fragment stub) matters, exactly as in production.
+
+OCR text is stubbed (EasyOCR's accuracy is its own concern); geometry, icon
+color/mark classification, side->team attribution, roster matching, and
+cross-screenshot dedupe all run for real on real pixels."""
 
 import numpy as np
 import pytest
@@ -31,7 +38,7 @@ WIDTH, HEIGHT = 2000, 1125
 BAND = regions.TEAM_EVENTS_REGIONS["event_band"]
 
 # (kind, side, minute, band y-range) — mirrors the real screenshots:
-# away goal, home yellow, away missed pen (white ball + X), away sub
+# away goal, home yellow, away missed pen, home converted pen, away sub
 ROWS = [
     ("goal", "away", 41, 0.06, 0.11),
     ("yellow_card", "home", 52, 0.22, 0.27),
@@ -39,11 +46,27 @@ ROWS = [
     ("penalty_goal", "home", 58, 0.54, 0.59),
     ("substitution", "away", 65, 0.70, 0.75),
 ]
-SUB_OFF_LINE = (0.765, 0.795)  # hanging outgoing-name line below the sub row
+SUB_OFF_LINE = (0.755, 0.785)  # hanging outgoing-name line below the sub row
 
 
 def _band_to_image_y(y_frac):
     return int((BAND[1] + y_frac * (BAND[3] - BAND[1])) * HEIGHT)
+
+
+def _draw_ball(image, center, radius, dark_mark=None):
+    """A goal-ball icon: a white circle, optionally with a dark mark drawn
+    INSIDE it (not a separate wider glyph beside it -- see event_parse.py's
+    module docstring for why that assumption was wrong)."""
+    cv2.circle(image, center, radius, (235, 235, 235), -1)
+    if dark_mark == "x":
+        cv2.line(image, (center[0] - radius, center[1] - radius),
+                  (center[0] + radius, center[1] + radius), (10, 10, 10), max(2, radius // 3))
+        cv2.line(image, (center[0] - radius, center[1] + radius),
+                  (center[0] + radius, center[1] - radius), (10, 10, 10), max(2, radius // 3))
+    elif dark_mark == "check":
+        vertex = (center[0], center[1] + radius // 2)
+        cv2.line(image, (center[0] - radius, center[1]), vertex, (10, 10, 10), max(2, radius // 3))
+        cv2.line(image, vertex, (center[0] + radius, center[1] - radius), (10, 10, 10), max(2, radius // 3))
 
 
 def _synthetic_events_image(path):
@@ -55,26 +78,15 @@ def _synthetic_events_image(path):
         center = ((x0 + x1) // 2, (row_y0 + row_y1) // 2)
         radius = (row_y1 - row_y0) // 3
         if kind == "goal":
-            cv2.circle(image, center, radius, (235, 235, 235), -1)
+            _draw_ball(image, center, radius)
         elif kind == "yellow_card":
             cv2.rectangle(image, (center[0] - radius // 2, row_y0), (center[0] + radius // 2, row_y1), (0, 220, 255), -1)
         elif kind == "missed_penalty":
-            # white ball with an X glyph beside it -> one wide white blob
-            cv2.circle(image, (center[0] + radius, center[1]), radius, (235, 235, 235), -1)
-            x_left = center[0] - 2 * radius
-            cv2.line(image, (x_left - radius, center[1] - radius), (x_left + radius, center[1] + radius), (235, 235, 235), 4)
-            cv2.line(image, (x_left - radius, center[1] + radius), (x_left + radius, center[1] - radius), (235, 235, 235), 4)
+            _draw_ball(image, center, radius, dark_mark="x")
         elif kind == "penalty_goal":
-            # white ball with a check beside it: long arm to the top-right
-            cv2.circle(image, (center[0] + radius, center[1]), radius, (235, 235, 235), -1)
-            x_left = center[0] - 2 * radius
-            vertex = (x_left - radius // 2, center[1] + radius)
-            cv2.line(image, (x_left - radius, center[1]), vertex, (235, 235, 235), 4)
-            cv2.line(image, vertex, (x_left + radius, center[1] - radius), (235, 235, 235), 4)
-        elif kind == "substitution":
-            mid = center[0]
-            cv2.rectangle(image, (x0 + 2, row_y0), (mid - 2, row_y1), (0, 200, 0), -1)
-            cv2.rectangle(image, (mid + 2, row_y0), (x1 - 2, row_y1), (0, 0, 220), -1)
+            _draw_ball(image, center, radius, dark_mark="check")
+        # substitution: no icon drawn at all -- detected structurally from
+        # the hanging sub_off fragment, not from anything in this zone.
     cv2.imwrite(str(path), image)
 
 
@@ -132,6 +144,13 @@ def test_full_layout_types_sides_and_sub_pair(db, tmp_path, monkeypatch):
     assert by_type["missed_penalty"]["minute"] == 75
     assert by_type["sub_on"]["minute"] == 65 and by_type["sub_off"]["minute"] == 65
     assert by_type["sub_on"]["team_id"] == away and by_type["sub_off"]["team_id"] == away
+    # the outgoing player is a REAL name in this table, not folded away
+    conn2 = conn
+    off_row = conn2.execute(
+        "SELECT p.name FROM match_events me JOIN players p ON p.player_id = me.player_id "
+        "WHERE me.match_id = ? AND me.event_type = 'sub_off'", (match,),
+    ).fetchone()
+    assert off_row["name"] == "Marcus Rashford"
 
 
 def test_overlapping_scrolled_screenshot_dedupes(db, tmp_path, monkeypatch):

@@ -57,76 +57,59 @@ def test_classify_small_white_icon_on_noisy_dark_background():
     assert classify_event_icon(crop) == "goal"
 
 
-def test_classify_substitution_green_arrow():
-    # EA's sub icon is a green+red arrow pair; green must win even though
-    # red pixels are present (otherwise subs would misread as red cards).
-    crop = np.full((20, 20, 3), (20, 15, 10), dtype=np.uint8)
-    crop[5:15, 2:9] = (0, 200, 0)     # green arrow (BGR)
-    crop[5:15, 11:18] = (0, 0, 220)   # red arrow
-    assert classify_event_icon(crop) == "substitution"
+# classify_event_icon never returns "substitution" -- real screenshots showed
+# the sub "icon" is actually a pair of tiny chevrons printed next to the
+# NAMES, not anything sitting in the goal/card icon zone at all. Subs are
+# detected structurally (a hanging name below the row -- see
+# event_parse.parse_event_rows and pipeline.process_team_events), never by
+# icon color, so this function only ever needs to tell goal/penalty/card
+# icons apart.
 
 
-def test_red_card_without_green_still_red():
+def test_red_card_is_detected():
     crop = np.full((20, 20, 3), (20, 15, 10), dtype=np.uint8)
     crop[4:16, 6:14] = (0, 0, 230)
     assert classify_event_icon(crop) == "red_card"
 
 
-def test_classify_missed_penalty_ball_with_red_x():
-    # White ball with a red X stroke through it -- white dominant plus a
-    # thinner-but-real amount of red.
+def _ball_with_dark_mark(mark_pixels):
+    """A same-sized white ball icon (14x14, matching a real goal-ball's
+    proportions) with `mark_pixels` (row, col) set to near-black, simulating
+    the extra ink a penalty mark adds INSIDE the ball itself -- not a
+    separate wider glyph beside it (that was the wrong shape assumption;
+    see event_parse.py's module docstring)."""
     crop = np.full((20, 20, 3), (20, 15, 10), dtype=np.uint8)
-    crop[4:16, 4:16] = (235, 235, 235)          # ball
-    for i in range(12):                          # the X, two diagonal strokes
-        crop[4 + i, 4 + i] = (0, 0, 230)
-        crop[4 + i, 15 - i] = (0, 0, 230)
-    assert classify_event_icon(crop) == "missed_penalty"
-
-
-def test_plain_white_ball_still_goal_not_missed_penalty():
-    crop = np.full((20, 20, 3), (20, 15, 10), dtype=np.uint8)
-    crop[4:16, 4:16] = (235, 235, 235)
-    assert classify_event_icon(crop) == "goal"
-
-
-def test_classify_missed_penalty_white_x_variant_by_shape():
-    # The real screenshots' missed-pen icon is ALL white (ball + X glyph
-    # beside it) -- color can't separate it from a goal ball, the wide
-    # white blob can.
-    crop = np.full((24, 44, 3), (20, 15, 10), dtype=np.uint8)
-    crop[6:18, 26:38] = (235, 235, 235)      # the ball
-    for i in range(12):                       # the X beside it
-        crop[6 + i, 6 + i] = (235, 235, 235)
-        crop[6 + i, 17 - i] = (235, 235, 235)
-    assert classify_event_icon(crop) == "missed_penalty"
-
-
-def _ball_with_glyph(draw_glyph):
-    """Dark crop with a white ball on the right and a white glyph drawn by
-    draw_glyph(crop, x0, x1, y0, y1) on the left -- the penalty icon shape."""
-    import cv2 as _cv2
-    crop = np.full((28, 52, 3), (20, 15, 10), dtype=np.uint8)
-    _cv2.circle(crop, (38, 14), 9, (235, 235, 235), -1)   # the ball
-    draw_glyph(crop, 6, 24, 5, 23)
+    crop[3:17, 3:17] = (235, 235, 235)  # the ball, 14x14
+    for row, col in mark_pixels:
+        crop[row, col] = (10, 10, 10)
     return crop
 
 
-def test_classify_penalty_missed_white_x():
-    import cv2 as _cv2
-
-    def draw_x(crop, x0, x1, y0, y1):
-        _cv2.line(crop, (x0, y0), (x1, y1), (235, 235, 235), 3)
-        _cv2.line(crop, (x0, y1), (x1, y0), (235, 235, 235), 3)
-
-    assert classify_event_icon(_ball_with_glyph(draw_x)) == "missed_penalty"
+def test_plain_ball_with_light_stitching_is_still_goal():
+    # A few dark pixels (normal ball stitching/pentagon detail) stay under
+    # the penalty-mark threshold.
+    stitching = [(5, 5), (5, 6), (10, 10), (14, 8)]
+    assert classify_event_icon(_ball_with_dark_mark(stitching)) == "goal"
 
 
-def test_classify_penalty_converted_white_check():
-    import cv2 as _cv2
+def test_symmetric_x_mark_inside_ball_is_missed_penalty():
+    # An X: both diagonals, hitting all four quadrants roughly symmetrically
+    # -- enough dark ink to clear the penalty-mark threshold, but no
+    # top-left/top-right asymmetry, so it defaults to missed_penalty.
+    mark = [(3 + i, 3 + i) for i in range(14)] + [(3 + i, 16 - i) for i in range(14)]
+    assert classify_event_icon(_ball_with_dark_mark(mark)) == "missed_penalty"
 
-    def draw_check(crop, x0, x1, y0, y1):
-        vertex_x = x0 + (x1 - x0) // 3
-        _cv2.line(crop, (x0, (y0 + y1) // 2), (vertex_x, y1), (235, 235, 235), 3)
-        _cv2.line(crop, (vertex_x, y1), (x1, y0), (235, 235, 235), 3)
 
-    assert classify_event_icon(_ball_with_glyph(draw_check)) == "penalty_goal"
+def test_check_mark_inside_ball_is_penalty_goal():
+    # A check: dark ink confined to the right half (short stroke bottom-left
+    # rising to a vertex, then a long, THICK stroke up through the
+    # top-right), leaving the top-left quadrant clear -- the
+    # converted-penalty shape. Thickened (each point plus its neighbor)
+    # so the mark clears the minimum-dark-area threshold.
+    mark = []
+    for i in range(5):  # short stroke, lower-left rising to the vertex
+        mark += [(9 + i, 8 + i), (9 + i, 9 + i)]
+    for i in range(11):  # long stroke, rising into the top-right corner
+        col = 13 - i // 2
+        mark += [(3 + i, col), (3 + i, col + 1)]
+    assert classify_event_icon(_ball_with_dark_mark(mark)) == "penalty_goal"

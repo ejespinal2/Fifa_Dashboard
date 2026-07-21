@@ -346,16 +346,26 @@ def process_team_summary(conn, match_id: int, home_team_id: int, away_team_id: i
     return capture_ids
 
 
+# The icon sits at roughly the row's vertical center regardless of how
+# tall the row's OCR'd text bbox happens to be — a lone minute+name line
+# (no hanging sub-off text below it) reads as a short bbox, and a purely
+# proportional pad can end up too thin to include the icon at all (this is
+# the likely cause of a real goal icon reading "unknown" while others in
+# the same screenshot classified fine). Pad by whichever is bigger: 50% of
+# the row's own height, or this fixed fraction of the whole band.
+MIN_ICON_PAD_FRACTION = 0.025
+
+
 def _side_icon_region(band: tuple, event: dict, side: str) -> tuple:
     """Full-image fractional crop for one event row's icon: that side's
-    icon zone horizontally, the row's own band vertically (padded 30% —
-    icons outsize the text beside them)."""
+    icon zone horizontally, the row's own band vertically, padded to
+    reliably include the icon regardless of the row's OCR'd text height."""
     x0, y0, x1, y1 = band
     icon_x0, icon_x1 = regions.TEAM_EVENTS_ICON_ZONES[side]
     band_height = y1 - y0
     row_top = y0 + event["y_top"] * band_height
     row_bottom = y0 + event["y_bottom"] * band_height
-    pad = 0.3 * (row_bottom - row_top)
+    pad = max(0.5 * (row_bottom - row_top), MIN_ICON_PAD_FRACTION * band_height)
     return (icon_x0, max(y0, row_top - pad), icon_x1, min(y1, row_bottom + pad))
 
 
@@ -381,11 +391,12 @@ def process_team_events(
     """Parses the Events tab's center-spine layout (see event_parse.py):
     minute circles on a central spine, the home team's events extending
     left and the away team's right — so the side a name sits on IS its
-    team. Each event's icon is classified from that side's icon zone at
-    the row's own height: goal, missed_penalty (ball+X, shape-
-    discriminated), yellow_card, red_card, or a substitution — subs store
-    two events, sub_on (the player entering, named at the minute) and
-    sub_off (the outgoing player, named on the hanging line below).
+    team. A row with a name hanging below it is STRUCTURALLY a
+    substitution (see event_parse's module docstring) and is stored as
+    sub_on (the row's name) + sub_off (the hanging name) without ever
+    consulting icon color. Every other row's icon is classified from that
+    side's icon zone: goal, missed_penalty, penalty_goal (converted
+    penalty), yellow_card, or red_card.
 
     A match with more events than fit on screen is captured as several
     scrolled screenshots (team_events.png, team_events_2.png, ... or
@@ -427,16 +438,18 @@ def process_team_events(
     for event in events:
         side = event["side"]
         team_id = home_team_id if side == "home" else away_team_id
-        icon_crop = crop_fractional(image, _side_icon_region(band, event, side))
-        event_type = classify_event_icon(icon_crop)
 
-        if event_type == "substitution":
+        if event["sub_off_name"]:
+            # Structural: a hanging name below means this IS a substitution,
+            # regardless of what the icon zone would say (there's no
+            # reliable icon there for subs at all — see event_parse.py).
             _store_event(conn, match_id, capture_id, team_id, candidates,
                          event["name"], event["minute"], "sub_on", stored)
-            if event["sub_off_name"]:
-                _store_event(conn, match_id, capture_id, team_id, candidates,
-                             event["sub_off_name"], event["minute"], "sub_off", stored)
+            _store_event(conn, match_id, capture_id, team_id, candidates,
+                         event["sub_off_name"], event["minute"], "sub_off", stored)
         else:
+            icon_crop = crop_fractional(image, _side_icon_region(band, event, side))
+            event_type = classify_event_icon(icon_crop)
             _store_event(conn, match_id, capture_id, team_id, candidates,
                          event["name"], event["minute"], event_type, stored)
     return capture_id, stored
