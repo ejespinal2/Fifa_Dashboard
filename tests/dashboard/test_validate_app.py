@@ -164,6 +164,38 @@ def test_add_another_event_row_lets_a_missed_event_be_recorded(tmp_path, monkeyp
     assert {(e["minute"], e["event_type"]) for e in events} == {(41, "goal"), (88, "sub_off")}
 
 
+def test_team_summary_captures_for_both_teams_show_which_team_is_which(tmp_path, monkeypatch):
+    """process_team_summary makes two captures per screenshot, one per
+    team, sharing the same screenshot image -- with no team name on
+    screen there'd be no way to tell them apart while reviewing."""
+    db_path = tmp_path / "fifa.db"
+    conn = connect(str(db_path))
+    init_db(str(db_path))
+    season_id = get_or_create_season(conn, "2025/26")
+    home_id = get_or_create_team(conn, "Manchester United")
+    away_id = get_or_create_team(conn, "Bayer 04 Leverkusen")
+    screenshot_dir = tmp_path / "match_1"
+    screenshot_dir.mkdir()
+    match_id = create_match(conn, season_id, 1, home_id, away_id, str(screenshot_dir))
+    screenshot_path = screenshot_dir / "team_summary.png"
+    cv2.imwrite(str(screenshot_path), np.zeros((4, 4, 3), dtype=np.uint8))
+    home_capture_id = create_capture(conn, match_id, "team_summary", str(screenshot_path), team_id=home_id)
+    away_capture_id = create_capture(conn, match_id, "team_summary", str(screenshot_path), team_id=away_id)
+    conn.close()
+
+    monkeypatch.setattr(sys, "argv", ["validate_app.py", "--db", str(db_path)])
+    at = AppTest.from_file(APP_PATH, default_timeout=30)
+    at.run()
+    assert not at.exception, at.exception
+
+    # lowest confidence first with both NULL/tied -- either order is fine,
+    # what matters is the team name is shown, not left ambiguous
+    assert at.subheader[0].value in (
+        "team_summary — Manchester United — match 1",
+        "team_summary — Bayer 04 Leverkusen — match 1",
+    )
+
+
 def test_already_reviewed_capture_is_hidden_by_default_but_fixable_via_the_toggle(tmp_path, monkeypatch):
     """The real bug this covers: a reviewer already confirmed this
     team_events capture (that's how a wrong "unknown" event made it into

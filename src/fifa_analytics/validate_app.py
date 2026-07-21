@@ -95,6 +95,11 @@ def load_stat_values(conn: sqlite3.Connection, capture_id: int):
     ).fetchall()
 
 
+def load_team_name(conn: sqlite3.Connection, team_id: int) -> str | None:
+    row = conn.execute("SELECT name FROM teams WHERE team_id = ?", (team_id,)).fetchone()
+    return row["name"] if row else None
+
+
 def load_match_team_ids(conn: sqlite3.Connection, match_id: int) -> tuple[int, int]:
     row = conn.execute(
         "SELECT home_team_id, away_team_id FROM matches WHERE match_id = ?", (match_id,)
@@ -148,11 +153,15 @@ def main():
     st.caption(f"{len(captures)} capture(s) match this filter, lowest confidence first.")
 
     capture = captures[0]
+    # team_summary in particular produces two near-identical-looking
+    # captures per screenshot (one per team's column) -- without the team
+    # name here there's no way to tell which one you're looking at.
+    team_name = load_team_name(conn, capture["team_id"]) if capture["team_id"] is not None else None
+    title = f"{capture['capture_type']}" + (f" — {team_name}" if team_name else "") + f" — match {capture['match_id']}"
     st.subheader(
-        f"{capture['capture_type']} — match {capture['match_id']} "
-        f"(confidence: {capture['ocr_confidence_avg']:.2f})"
+        f"{title} (confidence: {capture['ocr_confidence_avg']:.2f})"
         if capture["ocr_confidence_avg"] is not None
-        else f"{capture['capture_type']} — match {capture['match_id']}"
+        else title
     )
     if capture["reviewed"]:
         st.info("Already confirmed once — re-confirming will overwrite it with any edits below.")
