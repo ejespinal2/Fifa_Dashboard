@@ -516,8 +516,20 @@ def schedule_tab(conn, team_id: int, db_path: str) -> None:
     stats = queries.match_team_stats(conn, fixture["match_id"])
     if stats:
         with st.expander("Team stats (from the team summary screenshot)"):
+            # Display only: a blank cell means the OCR crop for that
+            # side/stat produced nothing (could be a genuine 0 the game
+            # renders faintly, or a real miss) -- shown as 0 rather than a
+            # blank cell, since most of these are small-integer counts
+            # where 0 is usually the right read. The underlying value
+            # stays None in the database; correct it in validate_app.py if
+            # it's actually wrong, not just visually blank here.
+            display_stats = [
+                {**row, "home": row["home"] if row["home"] is not None else 0,
+                 "away": row["away"] if row["away"] is not None else 0}
+                for row in stats
+            ]
             st.dataframe(
-                pd.DataFrame(stats).rename(
+                pd.DataFrame(display_stats).rename(
                     columns={"home": fixture["home_team"], "away": fixture["away_team"]}
                 ),
                 use_container_width=True, hide_index=True,

@@ -78,3 +78,40 @@ def test_shirt_number_in_name_zone_is_not_a_minute():
         _fragment("Bruno", 0.80, 0.86, 0.10, 0.14),
     ]
     assert parse_event_rows(fragments) == []
+
+
+def test_split_two_digit_minute_fragments_are_merged():
+    # Real bug: EasyOCR split "90'" into two separate detections, "9" and
+    # "0'" -- silently truncating the parsed minute to 9. Both pieces sit
+    # in the spine zone; they must be concatenated in x-order, not just the
+    # first one taken alone.
+    fragments = [
+        _fragment("9", 0.485, 0.497, 0.10, 0.14),
+        _fragment("0'", 0.497, 0.515, 0.10, 0.14),
+        _fragment("P. Dorgu", 0.62, 0.72, 0.10, 0.14),
+    ]
+    rows = parse_event_rows(fragments)
+    assert len(rows) == 1
+    assert rows[0]["minute"] == 90
+
+
+def test_single_fragment_minute_still_works_unaffected():
+    fragments = [
+        _fragment("41'", 0.485, 0.515, 0.10, 0.14),
+        _fragment("B. Sesko", 0.62, 0.72, 0.10, 0.14),
+    ]
+    rows = parse_event_rows(fragments)
+    assert rows[0]["minute"] == 41
+
+
+def test_non_minute_stray_fragment_in_spine_zone_falls_back():
+    # A short home-side name fragment that happens to straddle the spine
+    # zone must not corrupt the minute -- concatenation with it won't
+    # parse as a minute, so the code falls back to the lone digit fragment.
+    fragments = [
+        _fragment("Ko", 0.44, 0.47, 0.10, 0.14),  # stray, straddles the zone edge
+        _fragment("65'", 0.485, 0.515, 0.10, 0.14),
+        _fragment("D. Spence", 0.62, 0.72, 0.10, 0.14),
+    ]
+    rows = parse_event_rows(fragments)
+    assert any(r["minute"] == 65 for r in rows)

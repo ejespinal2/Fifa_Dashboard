@@ -89,8 +89,11 @@ Read-only Streamlit views over everything Phases 1-4 compute, one tab each
   shows its **match facts**: the score line, the parsed event timeline
   (⚽ goals, ✅⚽/❌⚽ converted/missed penalties, 🟨/🟥 cards, 🔺/🔻 subs on/off,
   minute by minute, player and team named), and the team-summary stats
-  side by side. Fat-fingered fixtures can be deleted along with anything
-  attached to them.
+  side by side — a stat with no OCR read on a side displays as `0`, not a
+  blank cell (display only; the underlying value stays unset until
+  corrected in `validate_app.py` if it's actually wrong, not just
+  visually blank). Fat-fingered fixtures can be deleted along with
+  anything attached to them.
 - **How long OCR takes, and what NOT to do while it runs.** Figure roughly
   half a minute per player screenshot on a typical laptop CPU (each one is
   ~20 separate OCR reads, not one) — a full match's ~40 images is realistically
@@ -415,6 +418,9 @@ snapshot, never hand-edited data like your players/matches).
     real bug where the outgoing player was being silently dropped even
     when correctly read, because the old code only used it after an icon
     check that never fired correctly.
+    **Verified end-to-end against a real full match**: every substitution
+    (6 pairs across a real 90-minute game) came through correctly, on/off
+    names and sides both right.
   - **Every other row** gets its icon classified from that side's icon
     zone at the row's own height: `goal` (white ball), `yellow_card` /
     `red_card` (EA's color-coding — still unverified against a real card
@@ -423,10 +429,17 @@ snapshot, never hand-edited data like your players/matches).
     *same-sized* ball icon with different ink inside it, not a wider
     "ball + separate glyph" shape as first assumed — discriminated by how
     much dark pixel area sits inside the ball's own disk (an ✗'s two
-    symmetric diagonals vs. a ✓'s asymmetric single stroke). **This
-    specific threshold is a best-effort first cut** — recalibrate against
-    real Match Facts output if a plain goal, a missed penalty, or a
-    converted penalty comes out misclassified.
+    symmetric diagonals vs. a ✓'s asymmetric single stroke). Against the
+    same real match, 2 of 3 ball icons classified correctly (a goal and
+    the missed penalty); one plain goal still came back `unknown` —
+    **unresolved**, and deliberately not guessed at again without more
+    evidence; if it recurs, the fix needs the actual screenshot to
+    measure against, not another blind threshold tweak.
+  - A two-digit minute ("90'") can arrive from EasyOCR as two separate
+    fragments ("9" + "0'"), silently truncating to minute 9 if only the
+    first is used — confirmed on a real capture. Fixed by concatenating
+    all spine-zone fragments in x-order before parsing the minute, not
+    just taking the first match.
   - 'HT' markers and scroll arrows are skipped. Capture a long list in
     scrolled sections (`team_events.png`, `team_events_2.png`, ... or
     unrenamed — auto-classification catches them); overlapping rows

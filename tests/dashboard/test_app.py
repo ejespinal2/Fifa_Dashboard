@@ -5,6 +5,7 @@ assert no view raises. The FIFA_DASH_DB env var is the app's test hook
 
 from pathlib import Path
 
+import pandas as pd
 import pytest
 from streamlit.testing.v1 import AppTest
 
@@ -270,3 +271,32 @@ def test_process_screenshots_shows_clear_message_when_already_locked(tmp_path, m
     rendered = " ".join(str(block.value) for block in at.success) + " ".join(str(w.value) for w in at.warning)
     assert "already being processed" in rendered
     assert lock.exists()  # the pre-existing lock from the "other run" is untouched
+
+
+def test_match_facts_team_stats_show_zero_not_blank_for_none(tmp_path, monkeypatch):
+    """A stat with no OCR read on one side (stat_value NULL) must render
+    as 0 in the Match Facts team-stats table, not a blank cell."""
+    db = tmp_path / "stats.db"
+    init_db(str(db))
+    conn = connect(str(db))
+    us = get_or_create_team(conn, "Us FC")
+    them = get_or_create_team(conn, "Them FC")
+    upsert_player(conn, "Someone", "ST", 80, "test", team_id=us)
+    season = get_or_create_season(conn, "2025-26")
+    match = create_match(conn, season, 1, us, them, "dir1", home_score=2, away_score=0)
+    capture = conn.execute(
+        "INSERT INTO ocr_captures (match_id, capture_type, screenshot_path, team_id) VALUES (?, 'team_summary', 'x.png', ?)",
+        (match, us),
+    ).lastrowid
+    # home side: OCR read nothing for corners (NULL); away side never even got a row
+    conn.execute("INSERT INTO match_stat_values (capture_id, stat_name, stat_value) VALUES (?, 'corners', NULL)", (capture,))
+    conn.commit()
+    conn.close()
+
+    at = _run(db, monkeypatch)
+    tables = [df.value for df in at.dataframe]
+    stats_tables = [df for df in tables if "stat" in df.columns and "Us FC" in df.columns]
+    assert stats_tables, "expected the team-stats table to render"
+    row = stats_tables[0][stats_tables[0]["stat"] == "corners"].iloc[0]
+    assert row["Us FC"] == 0 and row["Them FC"] == 0
+    assert not any(pd.isna(v) for v in row)

@@ -82,6 +82,29 @@ def _name_of(fragments: list[dict]) -> str | None:
     return text or None
 
 
+def _find_minute_fragment(line: list[dict]) -> dict | None:
+    """Finds the row's minute token. Usually a single fragment ("41'"), but
+    a real run showed EasyOCR occasionally splitting a two-digit minute
+    into separate detections ("90'" read as "9" + "0'"), silently
+    truncating the minute to 9 — so this first tries concatenating ALL
+    spine-zone fragments in x-order into one string and parsing that;
+    only falls back to a lone fragment match if concatenation doesn't
+    parse as a minute (e.g. a short name happens to straddle the zone)."""
+    spine_fragments = sorted(
+        (f for f in line if SPINE_ZONE[0] <= (f["x_left"] + f["x_right"]) / 2 <= SPINE_ZONE[1]),
+        key=lambda f: f["x_left"],
+    )
+    if spine_fragments:
+        merged_text = "".join(f["text"] for f in spine_fragments)
+        if parse_minute(merged_text) is not None:
+            return {
+                "text": merged_text,
+                "x_left": min(f["x_left"] for f in spine_fragments),
+                "x_right": max(f["x_right"] for f in spine_fragments),
+            }
+    return next((f for f in spine_fragments if parse_minute(f["text"]) is not None), None)
+
+
 def parse_event_rows(fragments: list[dict]) -> list[dict]:
     """Splits the event band's OCR fragments into event rows:
     [{minute, side ('home'|'away'), name, sub_off_name, y_top, y_bottom}].
@@ -110,14 +133,7 @@ def parse_event_rows(fragments: list[dict]) -> list[dict]:
     for line in sorted(lines, key=lambda l: min(f["y_top"] for f in l)):
         y_top = min(f["y_top"] for f in line)
         y_bottom = max(f["y_bottom"] for f in line)
-        minute_fragment = next(
-            (
-                f for f in line
-                if parse_minute(f["text"]) is not None
-                and SPINE_ZONE[0] <= (f["x_left"] + f["x_right"]) / 2 <= SPINE_ZONE[1]
-            ),
-            None,
-        )
+        minute_fragment = _find_minute_fragment(line)
 
         if minute_fragment is None:
             # maybe an outgoing-sub name line for the row just above — a
