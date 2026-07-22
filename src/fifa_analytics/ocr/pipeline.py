@@ -70,7 +70,7 @@ from fifa_analytics.ocr.extract import (
     read_text,
 )
 from fifa_analytics.ocr.player_match import clean_ocr_name, match_player
-from fifa_analytics.ocr.preprocess import clean_for_ocr, crop_fractional
+from fifa_analytics.ocr.preprocess import clean_for_ocr, contrast_grayscale, crop_fractional
 from fifa_analytics.ocr.team_match import match_team_header
 
 REASSIGNED_SOURCE_LABEL = "eafc26-datahub:reassigned"
@@ -192,7 +192,10 @@ def _read_stat_column(image, stat_list_box, stat_order, col_box) -> dict[str, tu
     scale = max(1, round(STAT_COLUMN_TARGET_ROW_PX / row_px)) if row_px else 1
     if scale > 1:
         strip = cv2.resize(strip, None, fx=scale, fy=scale, interpolation=cv2.INTER_CUBIC)
-    values = read_number_column(clean_for_ocr(strip), len(stat_order))
+    # contrast_grayscale (not clean_for_ocr): a hard threshold can fracture
+    # a thin small digit like a lone 7; EasyOCR reads a high-contrast
+    # grayscale of these small values more reliably.
+    values = read_number_column(contrast_grayscale(strip), len(stat_order))
     return dict(zip(stat_order, values))
 
 

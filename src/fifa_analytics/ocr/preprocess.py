@@ -29,3 +29,19 @@ def clean_for_ocr(crop: np.ndarray) -> np.ndarray:
         stretched, 255, cv2.ADAPTIVE_THRESH_GAUSSIAN_C, cv2.THRESH_BINARY, 31, -5
     )
     return thresh
+
+
+def contrast_grayscale(crop: np.ndarray) -> np.ndarray:
+    """High-contrast GRAYSCALE (no hard black/white threshold) for OCR.
+
+    The adaptive threshold in clean_for_ocr binarizes cleanly for most
+    fields, but on very small digits (a ~20px stat value from a 1080p
+    console share) it can fracture a thin stroke -- a lone '7' loses its
+    diagonal and drops out entirely. EasyOCR is trained on natural images
+    and reads a contrast-enhanced grayscale better than a broken binary, so
+    the player-summary value column uses this instead: global contrast
+    stretch plus CLAHE for local contrast, kept as grayscale."""
+    gray = cv2.cvtColor(crop, cv2.COLOR_BGR2GRAY) if crop.ndim == 3 else crop
+    stretched = cv2.normalize(gray, None, 0, 255, cv2.NORM_MINMAX)
+    clahe = cv2.createCLAHE(clipLimit=3.0, tileGridSize=(8, 8))
+    return clahe.apply(stretched)
