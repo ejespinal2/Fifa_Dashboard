@@ -169,15 +169,29 @@ def _split_row_value_cols(
     return out
 
 
+STAT_COLUMN_TARGET_ROW_PX = 120  # upscale so each row's digits are ~this tall
+
+
 def _read_stat_column(image, stat_list_box, stat_order, col_box) -> dict[str, tuple[float | None, float]]:
     """Read a whole value column in ONE OCR pass and map each number to its
     stat by vertical position (extract.read_number_column). Far more
     reliable for a column of small single-digit values than OCR'ing each
     row's crop separately, which drops/clips isolated digits. col_box is
-    the value column's x-range; the strip's height spans stat_list_box."""
+    the value column's x-range; the strip's height spans stat_list_box.
+
+    The strip is upscaled first: a full-height column isn't small enough to
+    trip clean_for_ocr's own upscale, so its digits stay tiny and EasyOCR
+    drops the faint single ones (a lone 7, a lone 1) to None. Blowing each
+    row up to ~STAT_COLUMN_TARGET_ROW_PX restores the magnification the
+    per-row crops used to get for free, while keeping the single-pass
+    column context."""
     x0, y0, x1, y1 = stat_list_box
     col_x0, col_x1 = col_box
     strip = crop_fractional(image, (col_x0, y0, col_x1, y1))
+    row_px = strip.shape[0] / max(len(stat_order), 1)
+    scale = max(1, round(STAT_COLUMN_TARGET_ROW_PX / row_px)) if row_px else 1
+    if scale > 1:
+        strip = cv2.resize(strip, None, fx=scale, fy=scale, interpolation=cv2.INTER_CUBIC)
     values = read_number_column(clean_for_ocr(strip), len(stat_order))
     return dict(zip(stat_order, values))
 

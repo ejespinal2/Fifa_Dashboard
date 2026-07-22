@@ -142,18 +142,18 @@ if __name__ == "__main__":
     # on screen. Best-effort: never let an OCR error break the overlay write.
     if screen_type == "player_summary":
         try:
-            from fifa_analytics.ocr.extract import read_number_column
-            from fifa_analytics.ocr.preprocess import clean_for_ocr, crop_fractional
+            # Call the exact function the pipeline uses, so the printed
+            # values are precisely what a reprocess would store.
+            from fifa_analytics.ocr.pipeline import _read_stat_column
 
             fresh = cv2.imread(image_path)  # un-annotated copy to OCR
             r = regions.PLAYER_SUMMARY_REGIONS
-            x0, y0, x1, y1 = r["stat_list_box"]
-            col_x0, col_x1 = r["stat_value_span"]
-            strip = crop_fractional(fresh, (col_x0, y0, col_x1, y1))
-            values = read_number_column(clean_for_ocr(strip), len(regions.PLAYER_SUMMARY_STAT_ORDER))
+            stats = _read_stat_column(
+                fresh, r["stat_list_box"], regions.PLAYER_SUMMARY_STAT_ORDER, r["stat_value_span"]
+            )
             print("\nExtracted player values (one OCR pass over the value column):")
-            for stat_name, (value, _conf) in zip(regions.PLAYER_SUMMARY_STAT_ORDER, values):
-                print(f"  {stat_name}: {value}")
+            for stat_name in regions.PLAYER_SUMMARY_STAT_ORDER:
+                print(f"  {stat_name}: {stats[stat_name][0]}")
             print("\nIf these match the LEFT column on screen, the box is good — "
                   "reprocess the match and they'll flow through. If a value is wrong, "
                   "tell me which stat and what it should be.")
