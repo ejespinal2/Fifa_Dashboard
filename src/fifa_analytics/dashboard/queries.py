@@ -8,6 +8,8 @@ recomputes in the model/analysis CLIs.
 
 import sqlite3
 
+from fifa_analytics.analysis.xpts import match_probabilities
+
 
 def teams_with_players(conn: sqlite3.Connection) -> list[dict]:
     rows = conn.execute(
@@ -144,6 +146,100 @@ def team_match_xpts(conn: sqlite3.Connection, team_id: int) -> list[dict]:
         (team_id,),
     ).fetchall()
     return [dict(row) for row in rows]
+
+
+def team_performance_vs_expected(conn: sqlite3.Connection, team_id: int) -> list[dict]:
+    """One team's actual vs expected, per match in play order, with running
+    cumulative totals for the season lines: goals (G) vs expected goals
+    (xG), and wins (W) vs expected wins (xW, the Poisson P(win) from that
+    match's xG pair). Only matches with a recorded result feed this
+    (actual_points is set only when both scores are entered), so the actual
+    and expected curves cover the same matches."""
+    rows = conn.execute(
+        """SELECT m.matchweek, m.competition, tme.match_id,
+                  opp.name AS opponent,
+                  CASE WHEN m.home_team_id = tme.team_id THEN m.home_score ELSE m.away_score END AS goals_for,
+                  tme.expected_goals_for AS xg_for,
+                  tme.expected_goals_against AS xg_against,
+                  tme.actual_points AS points
+           FROM team_match_expected tme
+           JOIN matches m ON m.match_id = tme.match_id
+           JOIN teams opp ON opp.team_id = CASE
+               WHEN m.home_team_id = tme.team_id THEN m.away_team_id
+               ELSE m.home_team_id END
+           WHERE tme.team_id = ? AND tme.actual_points IS NOT NULL
+           ORDER BY tme.match_id""",
+        (team_id,),
+    ).fetchall()
+
+    out = []
+    cum_g = cum_xg = cum_w = cum_xw = 0.0
+    for i, row in enumerate(rows, start=1):
+        goals_for = row["goals_for"] or 0
+        xg_for = row["xg_for"] or 0.0
+        p_win = match_probabilities(row["xg_for"] or 0.0, row["xg_against"] or 0.0)[0]
+        win = 1 if row["points"] == 3 else 0
+        cum_g += goals_for
+        cum_xg += xg_for
+        cum_w += win
+        cum_xw += p_win
+        out.append(
+            {
+                "match_number": i,
+                "matchweek": row["matchweek"],
+                "opponent": row["opponent"],
+                "competition": row["competition"] or "(no competition)",
+                "goals_for": goals_for,
+                "xg_for": round(xg_for, 2),
+                "win": win,
+                "xwin": round(p_win, 3),
+                "cum_goals_for": cum_g,
+                "cum_xg_for": round(cum_xg, 2),
+                "cum_wins": cum_w,
+                "cum_xwins": round(cum_xw, 2),
+            }
+        )
+    return out
+
+
+def team_xperformance_by_competition(conn: sqlite3.Connection, team_id: int) -> list[dict]:
+    """One team's actual vs expected totals, broken out per competition
+    (league, each cup, ...) with an 'All competitions' row first — the same
+    match set as team_performance_vs_expected (results-recorded matches with
+    xG). Each row: matches, G/xG, GA/xGA, W/xW, points/xPTS."""
+    rows = conn.execute(
+        """SELECT COALESCE(m.competition, '(no competition)') AS competition,
+                  CASE WHEN m.home_team_id = tme.team_id THEN m.home_score ELSE m.away_score END AS gf,
+                  CASE WHEN m.home_team_id = tme.team_id THEN m.away_score ELSE m.home_score END AS ga,
+                  tme.expected_goals_for AS xgf, tme.expected_goals_against AS xga,
+                  tme.expected_points AS xpts, tme.actual_points AS points
+           FROM team_match_expected tme
+           JOIN matches m ON m.match_id = tme.match_id
+           WHERE tme.team_id = ? AND tme.actual_points IS NOT NULL
+           ORDER BY tme.match_id""",
+        (team_id,),
+    ).fetchall()
+    if not rows:
+        return []
+
+    def tally(subset):
+        return {
+            "matches": len(subset),
+            "G": sum(r["gf"] for r in subset),
+            "xG": round(sum(r["xgf"] or 0.0 for r in subset), 2),
+            "GA": sum(r["ga"] for r in subset),
+            "xGA": round(sum(r["xga"] or 0.0 for r in subset), 2),
+            "W": sum(1 for r in subset if r["points"] == 3),
+            "xW": round(sum(match_probabilities(r["xgf"] or 0.0, r["xga"] or 0.0)[0] for r in subset), 2),
+            "points": sum(r["points"] for r in subset),
+            "xPTS": round(sum(r["xpts"] or 0.0 for r in subset), 2),
+        }
+
+    competitions = sorted({r["competition"] for r in rows})
+    out = [{"competition": "All competitions", **tally(rows)}]
+    for comp in competitions:
+        out.append({"competition": comp, **tally([r for r in rows if r["competition"] == comp])})
+    return out
 
 
 def scouting_pool_size(conn: sqlite3.Connection) -> int:

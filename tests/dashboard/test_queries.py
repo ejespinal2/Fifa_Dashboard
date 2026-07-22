@@ -99,6 +99,74 @@ def test_team_match_xpts_names_opponent_both_home_and_away(conn):
     assert table[0]["delta"] == round(4.0 - 3.5, 2)
 
 
+def _setup_two_competitions(conn):
+    """Us FC: a League win (2-0 home) and a Cup draw (1-1 away), each with
+    xG captured, so the actual-vs-expected queries have real data."""
+    us = get_or_create_team(conn, "Us FC")
+    them = get_or_create_team(conn, "Them FC")
+    season = get_or_create_season(conn, "2025-26")
+    m1 = create_match(conn, season, 1, us, them, "d1", home_score=2, away_score=0, competition="League")
+    m2 = create_match(conn, season, 2, them, us, "d2", home_score=1, away_score=1, competition="Cup")
+    for match_id, xgf, xga, pts in ((m1, 1.5, 0.8, 3.0), (m2, 1.0, 1.0, 1.0)):
+        conn.execute(
+            """INSERT INTO team_match_expected
+               (match_id, team_id, expected_goals_for, expected_goals_against,
+                expected_points, actual_points) VALUES (?, ?, ?, ?, 0.0, ?)""",
+            (match_id, us, xgf, xga, pts),
+        )
+    conn.commit()
+    return us, them, m1, m2
+
+
+def test_team_performance_vs_expected_accumulates_goals_and_wins(conn):
+    from fifa_analytics.analysis.xpts import match_probabilities
+
+    us, *_ = _setup_two_competitions(conn)
+    rows = queries.team_performance_vs_expected(conn, us)
+    assert [r["match_number"] for r in rows] == [1, 2]
+    # actual goals for us: 2 (home in m1), then 1 (away in m2)
+    assert [r["goals_for"] for r in rows] == [2, 1]
+    assert [r["cum_goals_for"] for r in rows] == [2, 3]
+    assert [r["cum_xg_for"] for r in rows] == [1.5, 2.5]
+    # win in m1 (2-0), draw in m2 (1-1)
+    assert [r["win"] for r in rows] == [1, 0]
+    assert [r["cum_wins"] for r in rows] == [1, 1]
+    # xwin comes from the Poisson model on each match's xG pair
+    assert rows[0]["xwin"] == round(match_probabilities(1.5, 0.8)[0], 3)
+    assert rows[1]["cum_xwins"] == round(
+        match_probabilities(1.5, 0.8)[0] + match_probabilities(1.0, 1.0)[0], 2
+    )
+
+
+def test_team_performance_vs_expected_skips_matches_without_a_result(conn):
+    us = get_or_create_team(conn, "Us FC")
+    them = get_or_create_team(conn, "Them FC")
+    season = get_or_create_season(conn, "2025-26")
+    m1 = create_match(conn, season, 1, us, them, "d1")  # no score recorded
+    conn.execute(
+        """INSERT INTO team_match_expected
+           (match_id, team_id, expected_goals_for, expected_goals_against,
+            expected_points, actual_points) VALUES (?, ?, 1.5, 0.8, 2.1, NULL)""",
+        (m1, us),
+    )
+    conn.commit()
+    assert queries.team_performance_vs_expected(conn, us) == []
+
+
+def test_team_xperformance_by_competition_totals_and_split(conn):
+    us, *_ = _setup_two_competitions(conn)
+    table = queries.team_xperformance_by_competition(conn, us)
+    all_row = table[0]
+    assert all_row["competition"] == "All competitions"
+    assert (all_row["matches"], all_row["G"], all_row["GA"], all_row["W"], all_row["points"]) == (2, 3, 1, 1, 4)
+    assert all_row["xG"] == 2.5
+
+    league = next(r for r in table if r["competition"] == "League")
+    cup = next(r for r in table if r["competition"] == "Cup")
+    assert (league["G"], league["GA"], league["W"], league["points"]) == (2, 0, 1, 3)
+    assert (cup["G"], cup["GA"], cup["W"], cup["points"]) == (1, 1, 0, 1)
+
+
 def test_schedule_lists_fixtures_with_capture_counts(conn):
     us, them, m1, m2, _ = _setup(conn)
     conn.execute(

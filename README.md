@@ -73,8 +73,14 @@ Read-only Streamlit views over everything Phases 1-4 compute, one tab each
 - **Progression** — true-overall lines for up to 6 players at once, plus a
   per-player six-attribute detail chart. Gaps in an attribute line are
   evidence gating (no shots that match = no shooting score), not lost data.
-- **Season (xPTS)** — the season table with an over/underperformance chart
-  (points − xPTS), and a match-by-match breakdown for the selected team.
+- **Season (xPTS)** — the all-teams table (xG for/against, xPTS, points)
+  with an over/underperformance chart (points − xPTS); then, for your own
+  club, cumulative **Goals vs xG** and **Wins vs xWins** season lines
+  (solid = actual, dashed = expected — above the dashed line means you're
+  outperforming the underlying play), a **by-competition** table breaking
+  actual-vs-expected (G/xG, GA/xGA, W/xW, points/xPTS) out per league and
+  cup, and a match-by-match breakdown. xWins come from the same Poisson
+  model as xPTS (each match's P(win) from its xG pair).
 - **Best XI** — the Phase 3 solver behind a formation picker, including
   "best of all" across every known formation.
 - **Scouting** — Phase 4 behind formation/tactic pickers: weakest slots,

@@ -268,6 +268,38 @@ def progression_tab(conn, team_id: int) -> None:
         st.dataframe(attr_df[present], use_container_width=True)
 
 
+def _cumulative_vs_expected_chart(pdf, actual_col, expected_col, actual_label, expected_label, y_title):
+    """Two cumulative lines over the season — actual (solid) vs expected
+    (dashed) — for one metric (goals or wins). pdf is one row per match with
+    the cumulative columns already computed in the query layer."""
+    long = pdf.melt(
+        id_vars=["match_number", "matchweek", "opponent"],
+        value_vars=[actual_col, expected_col],
+        var_name="metric",
+        value_name="value",
+    )
+    long["metric"] = long["metric"].map({actual_col: actual_label, expected_col: expected_label})
+    return (
+        alt.Chart(long)
+        .mark_line(point=True, strokeWidth=2)
+        .encode(
+            x=alt.X("match_number:O", title="match #"),
+            y=alt.Y("value:Q", title=y_title, scale=alt.Scale(zero=True)),
+            color=alt.Color(
+                "metric:N",
+                scale=alt.Scale(domain=[actual_label, expected_label], range=[OVER_COLOR, UNDER_COLOR]),
+                legend=alt.Legend(orient="bottom", title=None),
+            ),
+            strokeDash=alt.StrokeDash(
+                "metric:N",
+                scale=alt.Scale(domain=[actual_label, expected_label], range=[[1, 0], [5, 4]]),
+                legend=None,
+            ),
+            tooltip=["match_number", "matchweek", "opponent", "metric", alt.Tooltip("value", format=".2f")],
+        )
+    )
+
+
 def season_tab(conn, team_id: int) -> None:
     table = queries.season_xpts_table(conn)
     if not table:
@@ -277,6 +309,7 @@ def season_tab(conn, team_id: int) -> None:
         )
         return
     df = pd.DataFrame(table)
+    st.subheader("All teams — expected vs actual")
     st.dataframe(df, use_container_width=True, hide_index=True)
 
     st.subheader("Points vs expected (over/underperformance)")
@@ -292,12 +325,41 @@ def season_tab(conn, team_id: int) -> None:
     )
     st.altair_chart(delta_chart, use_container_width=True)
 
-    st.subheader("Match by match (selected team)")
-    matches = queries.team_match_xpts(conn, team_id)
-    if matches:
-        st.dataframe(pd.DataFrame(matches), use_container_width=True, hide_index=True)
+    st.divider()
+    team_name = conn.execute("SELECT name FROM teams WHERE team_id = ?", (team_id,)).fetchone()["name"]
+    st.subheader(f"{team_name} — performance vs expected")
+    perf = queries.team_performance_vs_expected(conn, team_id)
+    if not perf:
+        st.caption(
+            "No completed matches with xG yet for your club — record a result and "
+            "capture/review its team summary, then Recompute."
+        )
     else:
-        st.caption("No xPTS rows for the selected team yet.")
+        pdf = pd.DataFrame(perf)
+        col_g, col_w = st.columns(2)
+        with col_g:
+            st.caption("Goals vs Expected Goals (cumulative) — above the dashed line = clinical, below = wasteful")
+            st.altair_chart(
+                _cumulative_vs_expected_chart(pdf, "cum_goals_for", "cum_xg_for", "Goals", "xG", "cumulative goals"),
+                use_container_width=True,
+            )
+        with col_w:
+            st.caption("Wins vs Expected Wins (cumulative) — above = winning more than the xG says you should")
+            st.altair_chart(
+                _cumulative_vs_expected_chart(pdf, "cum_wins", "cum_xwins", "Wins", "xWins", "cumulative wins"),
+                use_container_width=True,
+            )
+
+        st.subheader(f"{team_name} — by competition")
+        comp_table = queries.team_xperformance_by_competition(conn, team_id)
+        st.dataframe(pd.DataFrame(comp_table), use_container_width=True, hide_index=True)
+
+    with st.expander("Match by match (your club)"):
+        matches = queries.team_match_xpts(conn, team_id)
+        if matches:
+            st.dataframe(pd.DataFrame(matches), use_container_width=True, hide_index=True)
+        else:
+            st.caption("No xPTS rows for your club yet.")
 
 
 def best_xi_tab(conn, team_id: int) -> None:
